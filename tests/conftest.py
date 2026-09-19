@@ -107,11 +107,19 @@ BASE_CONFIG: dict[str, Any] = {
 }
 
 
+class Replace(dict[str, Any]):
+    """Marker: use this dict instead of merging it into the base section."""
+
+
 def make_config(tmp_path: Path | None = None, **overrides: Any) -> AppConfig:
-    """Build a config from BASE_CONFIG with deep-merged overrides."""
+    """Build a config from BASE_CONFIG; dict overrides are merged unless wrapped in Replace."""
     raw = copy.deepcopy(BASE_CONFIG)
     for key, value in overrides.items():
-        if isinstance(value, dict) and isinstance(raw.get(key), dict):
+        if (
+            isinstance(value, dict)
+            and not isinstance(value, Replace)
+            and isinstance(raw.get(key), dict)
+        ):
             raw[key].update(value)
         else:
             raw[key] = value

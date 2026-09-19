@@ -30,7 +30,12 @@ class Scheduler:
         resolver: EducationResolver,
         config: AppConfig,
         maintenance: Callable[[], None] | None = None,
+        *,
+        tick_seconds: float = TICK_SECONDS,
+        reconcile_seconds: float | None = None,
     ) -> None:
+        self._tick_seconds = tick_seconds
+        self._reconcile_seconds = reconcile_seconds
         self._orch = orchestrator
         self._resolver = resolver
         self._cfg = config
@@ -64,8 +69,12 @@ class Scheduler:
             return
         fw = self._cfg.firewall
         loops = [
-            ("tick", lambda: self._orch.tick(), lambda: TICK_SECONDS),
-            ("reconcile", self._reconcile, lambda: float(fw.reconcile_seconds)),
+            ("tick", lambda: self._orch.tick(), lambda: self._tick_seconds),
+            (
+                "reconcile",
+                self._reconcile,
+                lambda: self._reconcile_seconds or float(fw.reconcile_seconds),
+            ),
             ("education", self._resolver.refresh, self._resolver.next_interval_seconds),
             ("housekeeping", self._housekeeping, lambda: MAINTENANCE_SECONDS),
         ]

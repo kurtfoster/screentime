@@ -41,10 +41,16 @@ class DnsClient(Protocol):
 class DnsPythonClient:
     """Resolve A and AAAA records through the system resolver, following CNAME chains."""
 
-    def __init__(self, timeout: float = 5.0) -> None:
+    def __init__(
+        self, timeout: float = 5.0, nameservers: list[str] | None = None, port: int = 53
+    ) -> None:
         import dns.asyncresolver
 
-        self._resolver = dns.asyncresolver.Resolver()
+        # Default: the system resolver (on the Pi, normally pfSense's Unbound).
+        self._resolver = dns.asyncresolver.Resolver(configure=nameservers is None)
+        if nameservers is not None:
+            self._resolver.nameservers = nameservers
+            self._resolver.port = port
         self._resolver.lifetime = timeout
         self._resolver.timeout = timeout
 
