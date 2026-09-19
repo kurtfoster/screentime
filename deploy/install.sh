@@ -301,7 +301,7 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
         else
             warn "Configuration is not valid yet, so the service was NOT started."
             warn "Edit $CONFIG_DIR/config.yaml and $CONFIG_DIR/users.yaml, then run:"
-            warn "  sudo -u $SERVICE_USER SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml SCREENTIME_USERS=$CONFIG_DIR/users.yaml $VENV/bin/python -m app --check-config"
+            warn "  cd $APP_DIR && sudo -u $SERVICE_USER env SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml SCREENTIME_USERS=$CONFIG_DIR/users.yaml $VENV/bin/python -m app --check-config"
             warn "  sudo systemctl start screentime.service screentime-backup.timer"
         fi
     fi
@@ -313,7 +313,7 @@ Done. Next steps:
   1. Edit $CONFIG_DIR/config.yaml (devices, allowances, pfSense address).
   2. Create logins: $VENV/bin/python $APP_DIR/scripts/make_password_hash.py  (one hash per user)
      and paste them into $CONFIG_DIR/users.yaml.
-  3. Validate:  cd $APP_DIR && SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml SCREENTIME_USERS=$CONFIG_DIR/users.yaml $VENV/bin/python -m app --check-config
+  3. Validate:  cd $APP_DIR && sudo -u $SERVICE_USER env SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml SCREENTIME_USERS=$CONFIG_DIR/users.yaml $VENV/bin/python -m app --check-config
   4. Install http://$HOSTNAME_FQDN/ca.crt on each iPhone/iPad (see README) and add a pfSense
      DNS host override for $HOSTNAME_FQDN pointing at this Pi.
 EOF

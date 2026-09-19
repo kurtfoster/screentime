@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 from app.audit import configure_logging
 from app.config import ConfigError, load_all
 from app.context import AppContext, build_context
-from app.deps import ApiError, LoginRequired, render
+from app.deps import ApiError, LoginRequired, client_ip, render
 from app.routes import api, auth, child, health, parent
 from app.version import VERSION
 
@@ -44,6 +45,23 @@ CSP = (
 def _mmss(seconds: int) -> str:
     seconds = max(0, int(seconds))
     return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _log_request(request: Request, status: int, started: float) -> None:
+    """One structured line per request. Path only: never query strings, headers or cookies."""
+    path = request.url.path
+    if path.startswith("/static/"):
+        return
+    routine = path in {"/child/live", "/parent/live"} or path.startswith("/health/")
+    log.log(
+        logging.DEBUG if routine else logging.INFO,
+        "request method=%s path=%s status=%d ms=%d ip=%s",
+        request.method,
+        path,
+        status,
+        int((time.monotonic() - started) * 1000),
+        client_ip(request),
+    )
 
 
 def config_paths_from_env() -> tuple[Path, Path]:
@@ -88,7 +106,9 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
     async def security_headers(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        started = time.monotonic()
         response = await call_next(request)
+        _log_request(request, response.status_code, started)
         response.headers["Content-Security-Policy"] = CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"

@@ -212,3 +212,15 @@ def test_pwa_assets_are_served(app_env: AppEnv) -> None:
     assert "Screen Time controller unavailable" in client.get("/offline").text
     for icon in ("icon-192.png", "icon-512.png", "apple-touch-icon.png"):
         assert client.get(f"/static/icons/{icon}").status_code == 200
+
+
+def test_requests_are_logged_without_secrets(app_env: AppEnv, caplog) -> None:  # type: ignore[no-untyped-def]
+    client = app_env.new_client()
+    with caplog.at_level("DEBUG", logger="screentime.app"):
+        client.get("/login?token=super-secret-query")
+        client.get("/static/css/app.css")
+        client.get("/health/live")
+    lines = [r.getMessage() for r in caplog.records if r.name == "screentime.app"]
+    assert any("method=GET path=/login status=200" in ln and "ip=127.0.0.1" in ln for ln in lines)
+    assert not any("super-secret-query" in ln for ln in lines)  # query strings are never logged
+    assert not any("/static/" in ln for ln in lines)
