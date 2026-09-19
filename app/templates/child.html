@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ view.name }} · Screen Time{% endblock %}
+{% block heading %}Hi {{ view.name }}{% endblock %}
+{% block content %}
+{% include "_child_live.html" %}
+<section class="card stack needs-server" id="push-card">
+  <p class="muted small">Want a buzz before your time runs out?</p>
+  <button id="enable-push" class="btn btn-secondary btn-small" type="button">Turn on alerts</button>
+</section>
+{% endblock %}

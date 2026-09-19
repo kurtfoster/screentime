@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Parent · Screen Time{% endblock %}
+{% block heading %}Parent dashboard{% endblock %}
+{% block nav %}<a class="btn btn-secondary btn-small" href="/parent/diagnostics">Diagnostics</a>{% endblock %}
+{% block content %}
+{% include "_parent_live.html" %}
+{% if principal %}
+<section class="card stack needs-server">
+  <p class="muted small">Get an alert when a session ends or the controller loses contact with the firewall.</p>
+  <button id="enable-push" class="btn btn-secondary btn-small" type="button">Turn on alerts</button>
+</section>
+{% endif %}
+{% endblock %}

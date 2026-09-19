@@ -1,0 +1,118 @@
+# Screen-Time Controller: production configuration template.
+# Copy to /opt/screentime/config/config.yaml and edit. Invalid values stop the service
+# from starting; validate with:  python -m app --check-config
+# Times are quoted "HH:MM" strings (unquoted HH:MM is misread by YAML).
+
+timezone: Australia/Melbourne
+logical_day_reset: "02:00"          # 02:00 belongs to the *new* day; history is never deleted
+
+children:
+  child8:
+    display_name: "Child 8"
+    username: "child8"              # must match the key in users.yaml
+    weekday_allowance_minutes: 120
+    weekend_allowance_minutes: 180
+    weekday_earliest_start: "09:00"
+    owned_devices: [ipad]           # optional cross-check against devices.<id>.owner
+    permitted_shared_devices: [kids_tv, lounge_tv]   # shared_tv devices only
+  child12:
+    display_name: "Child 12"
+    username: "child12"
+    weekday_allowance_minutes: 120
+    weekend_allowance_minutes: 180
+    weekday_earliest_start: "09:00"
+    owned_devices: [iphone_child12]
+    permitted_shared_devices: [kids_tv, lounge_tv]
+
+# NOTE: the specification's sample listed `ipad` under both children's shared devices while
+# also declaring it a personal device owned by child8. Personal devices are usable by their
+# owner only, so this template lists shared devices under permitted_shared_devices and the
+# iPad under its owner. For a genuinely shared iPad, set `type: shared_tv` and drop `owner`.
+devices:
+  ipad:
+    display_name: "iPad"
+    ip: "192.168.12.30"             # must be a static DHCP mapping on pfSense
+    type: personal
+    owner: child8
+    education_allowlist: true
+  iphone_child12:
+    display_name: "iPhone"
+    ip: "192.168.12.31"
+    type: personal
+    owner: child12
+    education_allowlist: true
+  kids_tv:
+    display_name: "Kids TV"
+    ip: "192.168.12.40"
+    type: shared_tv
+    weekday_cutoff: "18:30"         # hard stop on weekdays (logical day), overridable by a parent
+  lounge_tv:
+    display_name: "Lounge TV"
+    ip: "192.168.12.41"
+    type: shared_tv
+
+sessions:
+  default_minutes: 30
+  child_choices_minutes: [15, 30, 60]
+  child_extension_minutes: 15
+  warning_minutes: 5
+  max_concurrent_devices_per_child: 1
+  stop_returns_unused_reserved_time: true
+
+parents:
+  tv_session_choices_minutes: [15, 30, 60]
+  allow_until_stopped: true
+  allowance_grants_minutes: [15, 30, 60]
+  grants_override_all_child_restrictions: true
+  until_stopped_end_at_logical_day_reset: true
+
+# Education allowlist: hostnames only (no wildcards). The resolver turns these into the
+# SCR_EDU_ALLOW table. The starters below are best guesses; the parent diagnostics page
+# shows what resolves. Add hostnames as you discover what each app needs.
+always_allowed:
+  sora_school:
+    enabled: true
+    domains: []                     # e.g. your school's Sora library hostname
+  duolingo:
+    enabled: true
+    domains: ["duolingo.com", "www.duolingo.com"]
+  reading_eggs:
+    enabled: true
+    domains: ["readingeggs.com", "www.readingeggs.com"]
+  khan_academy:
+    enabled: true
+    domains: ["khanacademy.org", "www.khanacademy.org", "cdn.kastatic.org"]
+
+firewall:
+  mode: dry_run                     # dry_run | pfsense_ssh   (switch once pfSense is ready)
+  host: "192.168.12.1"
+  ssh_user: "screentime"
+  ssh_key_path: "/opt/screentime/.ssh/id_ed25519"
+  command: "/usr/local/sbin/screenctl"
+  use_sudo: true                    # the wrapper needs root for pfctl
+  active_table: "SCR_ACTIVE"
+  education_table: "SCR_EDU_ALLOW"
+  reconcile_seconds: 30
+  education_dns_refresh_seconds: 300
+  include_ipv6_in_education: true
+
+notifications:
+  browser_push_enabled: true
+  warning_minutes: 5                # must equal sessions.warning_minutes
+  parent_notifications_enabled: true
+
+security:
+  secure_cookies: true              # requires HTTPS (deploy/install.sh sets up a local CA)
+  session_ttl_minutes: 720
+  login_max_failures: 5
+  login_window_minutes: 15
+  login_lockout_minutes: 15
+  grant_actions_per_minute: 20
+  trusted_proxies: ["127.0.0.1", "::1"]   # nginx on the same host
+  enforce_file_modes: true          # refuse to start if users.yaml is group/world readable
+
+storage:
+  data_dir: /opt/screentime/data    # SQLite database, app secret and VAPID key live here
+
+push:
+  vapid_subject: "mailto:parents@example.invalid"   # contact address sent to push services

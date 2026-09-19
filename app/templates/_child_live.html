@@ -1,0 +1,100 @@
+<div id="live" class="stack" hx-get="/child/live?k={{ view.state_key }}" hx-trigger="every 5s" hx-swap="outerHTML" data-server-epoch="{{ view.server_epoch }}">
+  {% if view.degraded %}
+  <div class="banner banner-warn" role="alert">&#9888; Screen time can't start right now. Ask a parent for help.</div>
+  {% endif %}
+
+  <section class="card hero" aria-label="Time left today">
+    <p class="label">Today</p>
+    <p class="big">{{ view.remaining_text }} <span>remaining</span></p>
+    {% if view.start_rule %}<p class="muted small">&#128337; {{ view.start_rule }}</p>{% endif %}
+    {% for line in view.cutoff_lines %}<p class="muted small">&#128250; {{ line }}</p>{% endfor %}
+    {% if view.override_note %}<p class="notice notice-ok">&#9733; {{ view.override_note }}</p>{% endif %}
+  </section>
+
+  {% if view.active %}
+  {% set a = view.active %}
+  <section class="card stack" aria-label="Active session">
+    <div>
+      <p class="label">Now using</p>
+      <h2>{{ a.device_name }}</h2>
+      <p class="timer" data-end-epoch="{{ a.end_epoch }}" data-warn-epoch="{{ a.end_epoch - view.warning_seconds }}">
+        <span class="js-countdown">{{ a.seconds_remaining | mmss }}</span> <span>remaining</span>
+      </p>
+      <p class="muted">Ends at {{ a.end_local }}</p>
+      {% if a.participants | length > 1 %}<p class="muted small">&#128101; Watching: {{ a.participants | join(", ") }}</p>{% endif %}
+    </div>
+
+    {% if a.warning %}
+    <div class="notice notice-warn" role="alert">&#9200; Time is nearly up.</div>
+    {% endif %}
+
+    {% if a.extension_available %}
+      <p>{{ a.extension_message }}</p>
+      {% if a.ineligible %}
+      <p class="muted small">{{ a.ineligible | join(", ") }} doesn't have enough time to add more.</p>
+      <button class="btn needs-server" type="button" data-api-post="/api/child/session/{{ a.id }}/extend" data-body='{"mode":"eligible"}' data-done="Added {{ a.extension_minutes }} more minutes for you.">+{{ a.extension_minutes }} minutes (just me)</button>
+      {% else %}
+      <button class="btn needs-server" type="button" data-api-post="/api/child/session/{{ a.id }}/extend" data-body='{"mode":"all"}' data-done="Added {{ a.extension_minutes }} more minutes.">+{{ a.extension_minutes }} minutes</button>
+      {% endif %}
+    {% elif a.warning and a.extension_message %}
+      <p class="muted">{{ a.extension_message }}</p>
+    {% elif not a.warning %}
+      <p class="muted small">You can ask for +{{ a.extension_minutes }} minutes when {{ view.warning_minutes }} minutes are left.</p>
+    {% endif %}
+
+    <button class="btn btn-danger btn-large needs-server" type="button" data-api-post="/api/child/session/{{ a.id }}/stop" data-confirm="Stop screen time now?" data-done="Stopped. Well done!">&#9209; STOP NOW</button>
+  </section>
+
+  {% else %}
+  {% set any_device = view.devices | selectattr("available") | list %}
+  {% set any_time = view.durations | selectattr("available") | list %}
+  <form id="start-form" class="card stack" action="#" method="post">
+    <fieldset>
+      <legend>Choose device</legend>
+      <div class="choices stacked">
+        {% for d in view.devices %}
+        <label class="choice">
+          <input type="radio" name="device_id" value="{{ d.id }}" data-shared="{{ 0 if d.is_personal else 1 }}" {% if not d.available %}disabled{% endif %} {% if d.available and d.id == any_device[0].id %}checked{% endif %}>
+          <span class="choice-title">{{ d.name }}</span>
+          {% if not d.available %}<span class="choice-note">&#128683; {{ d.message }}</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Choose time</legend>
+      <div class="choices">
+        {% for t in view.durations %}
+        <label class="choice">
+          <input type="radio" name="minutes" value="{{ t.minutes }}" {% if not t.available %}disabled{% endif %} {% if t.selected %}checked{% endif %}>
+          <span class="choice-title">{{ t.minutes }} min</span>
+          {% if t.selected %}<span class="default-tag">picked for you</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset id="watchers" hidden>
+      <legend>Who is watching?</legend>
+      <label class="choice"><input type="checkbox" checked disabled><span class="choice-title">{{ view.name }}</span></label>
+      {% for sid, sname in view.siblings %}
+      <label class="choice"><input type="checkbox" name="sibling" value="{{ sid }}"><span class="choice-title">{{ sname }}</span></label>
+      <label class="field sibling-pw" data-child="{{ sid }}" hidden>{{ sname }}'s password
+        <input type="password" name="pw_{{ sid }}" autocomplete="off">
+      </label>
+      {% endfor %}
+    </fieldset>
+
+    {% if not any_device or not any_time %}
+      <div class="banner banner-warn" role="status">
+        &#128683;
+        {% if view.locked and not any_device %}Screen time has finished for today.
+        {% elif not any_time %}No screen time left today.
+        {% else %}Nothing is available right now.{% endif %}
+      </div>
+    {% endif %}
+    <button class="btn btn-large needs-server" type="submit" {% if not any_device or not any_time or view.degraded %}disabled{% endif %}>&#9654; START SCREEN TIME</button>
+  </form>
+  {% endif %}
+</div>

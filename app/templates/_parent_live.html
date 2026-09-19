@@ -1,0 +1,102 @@
+<div id="live" class="stack" hx-get="/parent/live?k={{ view.state_key }}" hx-trigger="every 5s" hx-swap="outerHTML">
+  {% if view.degraded %}
+  <div class="banner banner-error" role="alert">
+    &#9888; Enforcement degraded: the controller can't reach the firewall, so new child sessions are blocked and running sessions may not switch off.
+    {% if view.degraded_error %}<br><span class="small mono">{{ view.degraded_error }}</span>{% endif %}
+  </div>
+  {% endif %}
+
+  {% for c in view.children %}
+  <section class="card stack" aria-label="{{ c.name }}">
+    <div class="row spread">
+      <h2>{{ c.name }}</h2>
+      <span class="chip {% if c.status == 'Active' %}chip-ok{% elif c.status == 'Ended for today' or c.status == 'No time left' %}chip-danger{% endif %}">
+        {% if c.status == 'Active' %}&#9654;{% elif c.status == 'Ended for today' %}&#9209;{% elif c.status == 'No time left' %}&#9203;{% else %}&#9679;{% endif %} {{ c.status }}
+      </span>
+    </div>
+    <p class="big">{{ c.remaining_text }} <span>remaining</span></p>
+
+    {% for sid, device, ends in c.sessions %}
+    <div class="row spread">
+      <span>Active: <strong>{{ device }}</strong>, ends {{ ends }}</span>
+      <button class="btn btn-danger btn-small needs-server" type="button" data-api-post="/api/parent/session/{{ sid }}/stop" data-done="Session ended.">END NOW</button>
+    </div>
+    {% endfor %}
+    {% if c.override_until %}<p class="notice notice-ok">&#9733; Parent grant active until {{ c.override_until }}</p>{% endif %}
+
+    <div class="grants" role="group" aria-label="Add time for {{ c.name }}">
+      {% for m in view.grants %}
+      <button class="btn needs-server" type="button" data-idem data-api-post="/api/parent/child/{{ c.child_id }}/grant" data-body='{"minutes":{{ m }}}' data-done="Added {{ m }} minutes for {{ c.name }}.">+{{ m }}</button>
+      {% endfor %}
+    </div>
+    <div class="row">
+      <button class="btn btn-outline-danger needs-server" type="button" data-api-post="/api/parent/child/{{ c.child_id }}/end-today" data-confirm="End screen time today for {{ c.name }}? Their devices will switch off now." data-done="{{ c.name }} is finished for today.">END TODAY</button>
+      {% if c.locked %}
+      <button class="btn btn-secondary needs-server" type="button" data-api-post="/api/parent/child/{{ c.child_id }}/clear-day-lock" data-done="Day lock cleared.">CLEAR DAY LOCK</button>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <section class="card stack" aria-label="TV access">
+    <h2>TV access</h2>
+    {% for tv in view.tvs %}
+    <div class="stack">
+      <div class="row spread">
+        <strong>{{ tv.name }}</strong>
+        <span class="chip {% if tv.in_use %}chip-ok{% endif %}">{% if tv.in_use %}&#9654; In use{% else %}&#9679; Off{% endif %}</span>
+      </div>
+      <div class="tv-buttons" role="group" aria-label="Start {{ tv.name }}">
+        {% for m in view.tv_choices %}
+        <button class="btn btn-secondary needs-server" type="button" data-idem data-api-post="/api/parent/tv/{{ tv.device_id }}/start" data-body='{"minutes":{{ m }}}' data-done="{{ tv.name }} on for {{ m }} minutes.">{{ m }}</button>
+        {% endfor %}
+        {% if view.allow_until_stopped %}
+        <button class="btn btn-secondary needs-server" type="button" data-idem data-api-post="/api/parent/tv/{{ tv.device_id }}/start" data-body='{"until_stopped":true}' data-done="{{ tv.name }} on until stopped.">UNTIL STOPPED</button>
+        {% endif %}
+      </div>
+      {% for sid, label, ends in tv.users %}
+      <div class="row spread small">
+        <span>{{ label }}: ends {{ ends }}</span>
+        <button class="btn btn-outline-danger btn-small needs-server" type="button" data-api-post="/api/parent/session/{{ sid }}/stop" data-done="Stopped.">Stop</button>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="card stack" aria-label="Active overrides and sessions">
+    <h2>Active overrides / sessions</h2>
+    {% if view.sessions or view.overrides %}
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Who</th><th>Device / scope</th><th>Until</th><th></th></tr></thead>
+        <tbody>
+          {% for s in view.sessions %}
+          <tr><td>{{ s.who }}</td><td>{{ s.device }}</td><td>{{ s.ends }}</td>
+              <td><button class="btn btn-outline-danger btn-small needs-server" type="button" data-api-post="/api/parent/session/{{ s.id }}/stop">Stop</button></td></tr>
+          {% endfor %}
+          {% for oid, who, until in view.overrides %}
+          <tr><td>{{ who }}</td><td>&#9733; Override window</td><td>{{ until }}</td>
+              <td><button class="btn btn-outline-danger btn-small needs-server" type="button" data-api-post="/api/parent/override/{{ oid }}/revoke" data-confirm="Cancel this parent grant window?">Cancel</button></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted">Nothing active.</p>
+    {% endif %}
+  </section>
+
+  {% if view.locked_accounts %}
+  <section class="card stack" aria-label="Locked logins">
+    <h2>&#128274; Locked logins</h2>
+    <p class="muted small">Too many wrong passwords. Unlock once you know it was the right person.</p>
+    {% for name in view.locked_accounts %}
+    <div class="row spread">
+      <span>{{ name }}</span>
+      <button class="btn btn-secondary btn-small needs-server" type="button" data-api-post="/api/parent/lockouts/{{ name }}/reset" data-done="{{ name }} unlocked.">Unlock</button>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</div>

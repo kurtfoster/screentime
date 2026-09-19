@@ -1,0 +1,16 @@
+# Screen-Time Controller logins. Copy to /opt/screentime/config/users.yaml and chmod 0600.
+# Hashes only: generate each with
+#   .venv/bin/python scripts/make_password_hash.py
+# Child usernames must match children.<id>.username in config.yaml.
+users:
+  child8:
+    role: child
+    child_id: child8
+    password_hash: "$argon2id$..."     # replace: placeholders are rejected at startup
+  child12:
+    role: child
+    child_id: child12
+    password_hash: "$argon2id$..."
+  parents:
+    role: parent
+    password_hash: "$argon2id$..."

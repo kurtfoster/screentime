@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Screen Time{% endblock %}</title>
+  <meta name="theme-color" content="#1d4ed8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Screen Time">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0}'>
+  {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/htmx.min.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <h1>&#9200; {% block heading %}Screen Time{% endblock %}</h1>
+    {% if principal %}
+    <nav aria-label="Account">
+      {% block nav %}{% endblock %}
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ principal.csrf_token }}">
+        <button class="btn btn-secondary btn-small" type="submit">Sign out</button>
+      </form>
+    </nav>
+    {% endif %}
+  </header>
+  <div id="offline-banner" class="banner banner-error" role="alert" hidden>
+    &#9888; Screen Time controller unavailable. Check the home network, then try again.
+  </div>
+  <div id="flash" class="flash" role="status" aria-live="polite"></div>
+  <main id="main">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

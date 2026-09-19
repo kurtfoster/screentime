@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics · Screen Time{% endblock %}
+{% block heading %}Diagnostics{% endblock %}
+{% block nav %}<a class="btn btn-secondary btn-small" href="/parent">Back</a>{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="card stack">
+    <h2>System</h2>
+    <table>
+      <tr><th>App version</th><td>{{ version }}</td></tr>
+      <tr><th>Local time</th><td>{{ now_local.strftime("%A %d %B %Y, %H:%M:%S") }} ({{ timezone }})</td></tr>
+      <tr><th>Logical day</th><td>{{ logical_day.isoformat() }}</td></tr>
+      <tr><th>Database</th><td>{% if db_ok %}&#10003; OK{% else %}&#9888; ERROR{% endif %} (schema revision {{ revision or "unknown" }})</td></tr>
+      <tr><th>Firewall mode</th><td>{{ firewall_mode }}</td></tr>
+      <tr><th>Enforcement</th><td>{% if degraded %}<span class="chip chip-danger">&#9888; Degraded</span> {{ last_error }}{% else %}<span class="chip chip-ok">&#10003; Healthy</span>{% endif %}</td></tr>
+      <tr><th>Last pfSense contact</th><td>{% if last_contact %}{{ fmt(last_contact).strftime("%H:%M:%S") }}{% else %}never{% endif %}</td></tr>
+      <tr><th>Web push</th><td>{% if push_enabled %}enabled{% else %}disabled{% endif %}</td></tr>
+    </table>
+  </section>
+
+  <section class="card stack">
+    <h2>Active table (SCR_ACTIVE)</h2>
+    <table>
+      <tr><th>Desired</th><td class="mono">{{ desired | join(", ") or "none" }}</td></tr>
+      <tr><th>Actual</th><td class="mono">{% if actual is none %}not yet reconciled{% else %}{{ actual | join(", ") or "none" }}{% endif %}</td></tr>
+      <tr><th>Pending state kills</th><td class="mono">{{ pending_kills | join(", ") or "none" }}</td></tr>
+    </table>
+  </section>
+
+  <section class="card stack">
+    <h2>Education allowlist</h2>
+    <table>
+      <tr><th>Last refresh</th><td>{% if resolver.last_refresh_at %}{{ fmt(resolver.last_refresh_at).strftime("%H:%M:%S") }}{% else %}not yet{% endif %}</td></tr>
+      <tr><th>Last table update</th><td>{% if resolver.last_push_at %}{{ fmt(resolver.last_push_at).strftime("%H:%M:%S") }} &#10003;{% else %}never{% endif %}{% if resolver.last_push_ok is false %} &#9888; {{ resolver.last_push_error }}{% endif %}</td></tr>
+      <tr><th>Addresses in table</th><td>{{ resolver.pushed | length }}</td></tr>
+      <tr><th>Unresolved hostnames</th><td>{% if unresolved %}&#9888; {{ unresolved | map(attribute="host") | join(", ") }}{% else %}none{% endif %}</td></tr>
+      <tr><th>Stale (using last known good)</th><td>{{ stale | map(attribute="host") | join(", ") or "none" }}</td></tr>
+    </table>
+    {% if hosts %}
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Service</th><th>Hostname</th><th>Status</th><th>Addresses</th><th>Last OK</th></tr></thead>
+        <tbody>
+        {% for h in hosts %}
+          <tr>
+            <td>{{ h.service }}</td>
+            <td class="mono">{{ h.host }}{% if h.cnames %}<br><span class="muted small">&#8627; {{ h.cnames | join(" → ") }}</span>{% endif %}</td>
+            <td>{% if h.status == "ok" %}&#10003; ok{% elif h.status == "stale" %}&#9888; stale ({{ h.consecutive_failures }} failures){% elif h.status == "failed" %}&#10007; failed: {{ h.last_error }}{% else %}&hellip; pending{% endif %}</td>
+            <td class="mono">{{ h.ips | sort | join(", ") }}</td>
+            <td>{% if h.last_success_at %}{{ fmt(h.last_success_at).strftime("%H:%M:%S") }}{% else %}never{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted">No allowlist hostnames are configured. Add domains under <code>always_allowed</code> in config.yaml.</p>
+    {% endif %}
+  </section>
+
+  <section class="card stack">
+    <h2>Recent firewall operations</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Result</th><th>ms</th></tr></thead>
+        <tbody>
+        {% for e in fw_events %}
+          <tr><td>{{ fmt(e.timestamp).strftime("%H:%M:%S") }}</td><td>{{ e.action }}</td><td class="mono">{{ e.target }}</td><td>{% if e.success %}&#10003; ok{% else %}&#10007; {{ e.error_text }}{% endif %}</td><td>{{ e.duration_ms }}</td></tr>
+        {% else %}
+          <tr><td colspan="5" class="muted">No operations yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card stack">
+    <h2>Recent audit events</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Actor</th><th>Event</th><th>Subject</th><th>Result</th></tr></thead>
+        <tbody>
+        {% for e in audit %}
+          <tr><td>{{ fmt(e.timestamp).strftime("%d %b %H:%M:%S") }}</td><td>{{ e.actor }}</td><td>{{ e.event_type }}</td><td>{{ e.subject }}</td><td>{{ e.result }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

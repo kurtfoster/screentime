@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Screen Time{% endblock %}
+{% block content %}
+<section class="card login stack">
+  <h2>Sign in</h2>
+  {% if message %}<div class="banner banner-error" role="alert">&#9888; {{ message }}</div>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="login_token" value="{{ login_token }}">
+    <label class="field">Username
+      <input type="text" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" required>
+    </label>
+    <label class="field">Password
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button class="btn btn-large" type="submit">Sign in</button>
+  </form>
+</section>
+{% endblock %}

@@ -408,7 +408,7 @@ def load_users(path: Path | str, config: AppConfig) -> dict[str, UserCfg]:
     try:
         users = UsersFile.model_validate(raw).users
     except ValidationError as exc:
-        raise ConfigError(problems + _format_validation_error(exc, "users.")) from exc
+        raise ConfigError(problems + _format_validation_error(exc)) from exc
 
     child_users: dict[str, str] = {}
     parents = 0

@@ -1,0 +1,46 @@
+# Local development configuration: dry-run firewall, HTTP cookies, data under ./data.
+# Run with:  SCREENTIME_CONFIG=config/config.dev.yaml SCREENTIME_USERS=config/users.dev.yaml \
+#            .venv/bin/uvicorn app.main:app --port 8080
+# Create users.dev.yaml (gitignored pattern: config/users.yaml) with scripts/make_dev_users.py.
+timezone: Australia/Melbourne
+logical_day_reset: "02:00"
+
+children:
+  child8:
+    display_name: "Child 8"
+    username: "child8"
+    weekday_allowance_minutes: 120
+    weekend_allowance_minutes: 180
+    weekday_earliest_start: "09:00"
+    owned_devices: [ipad]
+    permitted_shared_devices: [kids_tv, lounge_tv]
+  child12:
+    display_name: "Child 12"
+    username: "child12"
+    weekday_allowance_minutes: 120
+    weekend_allowance_minutes: 180
+    weekday_earliest_start: "09:00"
+    owned_devices: [iphone_child12]
+    permitted_shared_devices: [kids_tv, lounge_tv]
+
+devices:
+  ipad: {display_name: "iPad", ip: "192.168.12.30", type: personal, owner: child8, education_allowlist: true}
+  iphone_child12: {display_name: "iPhone", ip: "192.168.12.31", type: personal, owner: child12, education_allowlist: true}
+  kids_tv: {display_name: "Kids TV", ip: "192.168.12.40", type: shared_tv, weekday_cutoff: "18:30"}
+  lounge_tv: {display_name: "Lounge TV", ip: "192.168.12.41", type: shared_tv}
+
+always_allowed:
+  duolingo: {enabled: true, domains: ["www.duolingo.com"]}
+
+firewall:
+  mode: dry_run
+
+notifications:
+  browser_push_enabled: false
+
+security:
+  secure_cookies: false
+  enforce_file_modes: false
+
+storage:
+  data_dir: ./data
