@@ -70,6 +70,7 @@ def build_context(
     dns: DnsClient | None = None,
     push_sender: PushSender | None = None,
     migrate: bool = True,
+    enable_push: bool = True,
 ) -> AppContext:
     clock = clock or SystemClock()
     calendar = LogicalCalendar(config.zone, config.logical_day_reset)
@@ -89,7 +90,7 @@ def build_context(
     firewall = AuditedFirewall(adapter, db, clock, config.firewall.mode)
 
     public_key: str | None = None
-    if push_sender is None and config.notifications.browser_push_enabled:
+    if push_sender is None and enable_push and config.notifications.browser_push_enabled:
         try:
             from app.push import VapidKeys, WebPushSender
 

@@ -1,0 +1,41 @@
+[Unit]
+Description=Screen-Time Controller
+Documentation=file:///opt/screentime/app/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=screentime
+Group=screentime
+WorkingDirectory=/opt/screentime/app
+Environment=HOME=/opt/screentime
+Environment=SCREENTIME_CONFIG=/opt/screentime/config/config.yaml
+Environment=SCREENTIME_USERS=/opt/screentime/config/users.yaml
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Refuse to start (with a readable error in the journal) if the configuration is invalid.
+ExecStartPre=/opt/screentime/venv/bin/python -m app --check-config
+ExecStart=/opt/screentime/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-server-header --no-access-log
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the service needs its data directory and outbound SSH/DNS, nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/screentime/data /opt/screentime/.ssh
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

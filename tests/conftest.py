@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -145,6 +146,22 @@ class Env:
     def set(self, hour: int, minute: int = 0, day: date = MONDAY, second: int = 0) -> datetime:
         self.clock.set(at(hour, minute, day, second))
         return self.clock.now()
+
+
+@pytest.fixture(autouse=True)
+def _dispose_databases(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Close every SQLite engine a test opened so no connections leak between tests."""
+    created: list[Database] = []
+    original = Database.__init__
+
+    def tracking(self: Database, *args: Any, **kwargs: Any) -> None:
+        original(self, *args, **kwargs)
+        created.append(self)
+
+    monkeypatch.setattr(Database, "__init__", tracking)
+    yield
+    for db in created:
+        db.dispose()
 
 
 def build_env(tmp_path: Path, start: datetime | None = None, **config_overrides: Any) -> Env:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Screen-Time Controller backup
+After=screentime.service
+
+[Service]
+Type=oneshot
+User=screentime
+Group=screentime
+Environment=HOME=/opt/screentime
+ExecStart=/opt/screentime/app/deploy/backup.sh
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/opt/screentime/backups /opt/screentime/data
