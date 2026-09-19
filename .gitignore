@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.egg-info/
+build/
+dist/
+
+# Local runtime data and secrets: never commit these.
+/data/
+/config/config.yaml
+/config/users.yaml
+*.db
+*.db-wal
+*.db-shm
+*.pem
+*.key
+.ssh/
+
+# Per-developer Claude Code settings
+.claude/settings.local.json
