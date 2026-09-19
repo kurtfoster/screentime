@@ -617,3 +617,16 @@ def test_device_enable_override_forces_device_on_until_it_expires(env: Env) -> N
     assert desired_active_ips_now(env) == {"192.168.12.41"}
     env.set(10, 11)
     assert desired_active_ips_now(env) == set()
+
+
+def test_a_session_past_its_planned_end_does_not_block_the_next_start(env: Env) -> None:
+    """Between the planned end and the next timer tick the old session is still 'active' in the
+    database; it must not make the child wait (or be told they are already using a device)."""
+    env.set(10, 0)
+    assert start(env, "child8", "ipad", 15).ok
+    env.set(10, 15, second=2)  # timer has not ticked yet
+    res = start(env, "child8", "kids_tv", 15)
+    assert res.ok, res.message
+    assert summary(env).charged_seconds == 15 * 60  # the expired session is charged only to its end
+    env.service.tick()
+    assert summary(env).charged_seconds == 15 * 60  # no double-charging once the timer catches up

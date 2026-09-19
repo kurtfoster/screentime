@@ -160,7 +160,12 @@ def load_facts(
 ) -> ChildFacts:
     summary = summary or allowance_summary(db, config, cal, child_id, now)
     day = summary.day
-    active = active_child_sessions(db, child_id)
+    # A session past its planned end is no longer "in use", even if the timer has not closed it yet.
+    active = [
+        s
+        for s in active_child_sessions(db, child_id)
+        if s.planned_end_at is None or s.planned_end_at > now
+    ]
     return ChildFacts(
         child_id=child_id,
         day=day,

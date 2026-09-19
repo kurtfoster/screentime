@@ -150,12 +150,13 @@
       if (!network) delete form.dataset.rid; // keep the id only when a retry may repeat this request
       form.querySelectorAll('input[type="password"]').forEach((i) => { i.value = ""; });
       if (status >= 200 && status < 300 && data.ok) {
-        const s = data.sessions?.[0];
-        showFlash(s ? "Screen time started. Have fun!" : "Started.", "ok");
+        showFlash("Screen time started. Have fun!", "ok");
+        refreshLive();
       } else {
+        // Keep the form exactly as the child left it so they can correct one thing and retry.
+        // If state really changed, the 5-second poll notices (the server compares state keys).
         showFlash(data.message || "Could not start.", "error");
       }
-      refreshLive();
     });
   }
 

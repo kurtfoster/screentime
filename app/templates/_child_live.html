@@ -18,7 +18,7 @@
       <p class="label">Now using</p>
       <h2>{{ a.device_name }}</h2>
       <p class="timer" data-end-epoch="{{ a.end_epoch }}" data-warn-epoch="{{ a.end_epoch - view.warning_seconds }}">
-        <span class="js-countdown">{{ a.seconds_remaining | mmss }}</span> <span>remaining</span>
+        <span class="js-countdown">{{ a.seconds_remaining | mmss }}</span> <span class="unit">remaining</span>
       </p>
       <p class="muted">Ends at {{ a.end_local }}</p>
       {% if a.participants | length > 1 %}<p class="muted small">&#128101; Watching: {{ a.participants | join(", ") }}</p>{% endif %}

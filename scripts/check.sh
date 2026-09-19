@@ -3,7 +3,7 @@
 #
 #   scripts/check.sh            # full run (this is what `make test` calls)
 #   scripts/check.sh --fast     # skip coverage measurement
-#   scripts/check.sh --e2e      # also run the Playwright browser tests
+#   scripts/check.sh --no-e2e   # skip the Playwright browser tests
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -11,11 +11,11 @@ PY=${PYTHON:-.venv/bin/python}
 [ -x "$PY" ] || { echo "No virtualenv at .venv: run 'make install' (or see README Quick Start)" >&2; exit 1; }
 
 FAST=0
-E2E=0
+E2E=1
 for arg in "$@"; do
     case "$arg" in
         --fast) FAST=1 ;;
-        --e2e) E2E=1 ;;
+        --no-e2e) E2E=0 ;;
         *) echo "unknown option: $arg" >&2; exit 64 ;;
     esac
 done
@@ -32,8 +32,8 @@ step "shell syntax"
 for f in deploy/*.sh scripts/*.sh; do bash -n "$f"; done
 sh -n deploy/pfsense-screenctl.sh
 
-MARK=(-m "not e2e")
-[ "$E2E" -eq 1 ] && MARK=()
+MARK=()
+[ "$E2E" -eq 0 ] && MARK=(-m "not e2e")
 step "pytest"
 if [ "$FAST" -eq 1 ]; then
     "$PY" -m pytest -q "${MARK[@]}"

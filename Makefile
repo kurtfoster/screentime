@@ -26,8 +26,8 @@ fmt:             ## apply formatting and safe lint fixes
 	$(PY) -m ruff format app tests scripts migrations
 	$(PY) -m ruff check --fix app tests scripts migrations
 
-e2e:             ## everything including the Playwright browser tests
-	scripts/check.sh --e2e
+e2e:             ## browser tests only
+	$(PY) -m pytest -q -m e2e
 
 dev-users:       ## write config/users.dev.yaml with throwaway passwords
 	$(PY) scripts/make_dev_users.py
