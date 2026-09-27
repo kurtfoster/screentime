@@ -7,21 +7,26 @@ deferred ``BEGIN`` and see a consistent snapshot.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import DateTime, Engine, create_engine, event, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 from sqlalchemy.types import TypeDecorator
 
+if TYPE_CHECKING:
+    from alembic.config import Config
+
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
+_REVISION_RE = re.compile(
+    r"^(down_revision|revision)\s*(?::[^=]+)?=\s*['\"]?([^'\"\s]+)['\"]?", re.M
+)
 
 _write_tx: ContextVar[bool] = ContextVar("screentime_write_tx", default=False)
 
@@ -100,11 +105,38 @@ class Database:
     def upgrade(self) -> None:
         upgrade_to_head(self.url)
 
+    def upgrade_if_needed(self) -> bool:
+        """Run Alembic only when the schema is behind. Returns whether it ran.
+
+        Importing and running Alembic costs several seconds on a Raspberry Pi 1, and on almost
+        every start the database is already at the head revision.
+        """
+        heads = script_heads()
+        if len(heads) == 1 and current_revision(self) in heads:
+            return False
+        self.upgrade()
+        return True
+
     def dispose(self) -> None:
         self.engine.dispose()
 
 
+def script_heads(versions_dir: Path = MIGRATIONS_DIR / "versions") -> set[str]:
+    """Head revision(s) of the migration scripts, read as text so Alembic is not imported."""
+    revisions: set[str] = set()
+    parents: set[str] = set()
+    for script in versions_dir.glob("*.py"):
+        found = dict(_REVISION_RE.findall(script.read_text(encoding="utf-8")))
+        if "revision" in found:
+            revisions.add(found["revision"])
+        if found.get("down_revision") not in (None, "None"):
+            parents.add(found["down_revision"])
+    return revisions - parents
+
+
 def alembic_config(url: str) -> Config:
+    from alembic.config import Config
+
     cfg = Config()
     cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
     cfg.set_main_option("sqlalchemy.url", url)
@@ -112,6 +144,8 @@ def alembic_config(url: str) -> Config:
 
 
 def upgrade_to_head(url: str) -> None:
+    from alembic import command
+
     command.upgrade(alembic_config(url), "head")
 
 

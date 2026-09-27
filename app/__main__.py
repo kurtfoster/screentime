@@ -1,4 +1,9 @@
-"""Command line entry point: ``python -m app --check-config``."""
+"""Command line entry point: ``python -m app --check-config``.
+
+``--check-config`` runs before every service start (ExecStartPre), so it imports only the
+configuration layer: no FastAPI, Starlette, uvicorn, SQLAlchemy, Alembic or argon2. On a
+Raspberry Pi 1 each of those costs seconds.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from app.config import ConfigError, hash_cost_problem, load_all
-from app.main import config_paths_from_env
+from app.config import ConfigError, config_paths_from_env, hash_cost_problem, load_all
 from app.version import VERSION
 
 
@@ -73,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     from app.db import Database
 
     db = Database(config.storage.db_file)
-    db.upgrade()
+    db.upgrade_if_needed()
     with db.session(write=True) as session:
         sync_reference_data(session, config, users)
     print(f"Database ready at {config.storage.db_file}")

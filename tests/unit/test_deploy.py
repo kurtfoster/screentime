@@ -71,7 +71,11 @@ def test_install_lays_out_directories_files_and_permissions(tmp_path: Path) -> N
         "app/alembic.ini",
     ):
         assert (prefix / rel).exists(), rel
-    assert not list((prefix / "app").rglob("__pycache__"))
+    # Bytecode is compiled at install time for this interpreter, never copied from the source tree.
+    compiled = {p.name for p in (prefix / "app" / "app" / "__pycache__").glob("*.pyc")}
+    assert f"main.{sys.implementation.cache_tag}.pyc" in compiled
+    assert all(sys.implementation.cache_tag in name for name in compiled)
+    assert list((prefix / "app" / "migrations" / "versions" / "__pycache__").glob("*.pyc"))
     assert "Next steps" in res.stdout
 
 

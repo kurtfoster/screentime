@@ -8,6 +8,7 @@ problem at once, so the service refuses to start rather than run half-configured
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import stat
 from datetime import time
@@ -37,6 +38,17 @@ ARGON2_MIN_MEMORY_KIB = 19456
 ARGON2_MIN_TIME_COST = 2
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _TABLE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
+
+
+DEFAULT_CONFIG = "/opt/screentime/config/config.yaml"
+DEFAULT_USERS = "/opt/screentime/config/users.yaml"
+
+
+def config_paths_from_env() -> tuple[Path, Path]:
+    return (
+        Path(os.environ.get("SCREENTIME_CONFIG", DEFAULT_CONFIG)),
+        Path(os.environ.get("SCREENTIME_USERS", DEFAULT_USERS)),
+    )
 
 
 class ConfigError(Exception):

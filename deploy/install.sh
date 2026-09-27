@@ -153,6 +153,10 @@ else
         app migrations scripts deploy alembic.ini pyproject.toml VERSION README.md OPERATIONS.md SECURITY.md \
         config/config.example.yaml config/users.example.yaml config/config.dev.yaml) | (cd "$APP_DIR" && tar xf -)
     chmod 0755 "$APP_DIR"/deploy/*.sh "$APP_DIR"/scripts/*.py 2>/dev/null || true
+    # Precompile once, as root: the service runs with a read-only app directory and
+    # PYTHONDONTWRITEBYTECODE=1, so otherwise every start recompiles every module (slow on a Pi 1).
+    "$PYTHON" -m compileall -q "$APP_DIR/app" "$APP_DIR/migrations" "$APP_DIR/scripts" >/dev/null ||
+        warn "could not precompile the application; it will still run, just start more slowly"
     [ "$NO_SYSTEM" -eq 1 ] || chown -R root:root "$APP_DIR"
 fi
 

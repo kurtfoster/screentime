@@ -8,7 +8,6 @@ service at startup with a clear message rather than serving half-configured.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -23,17 +22,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.audit import configure_logging
-from app.config import ConfigError, load_all
+from app.config import ConfigError, config_paths_from_env, load_all
 from app.context import AppContext, build_context
 from app.deps import ApiError, LoginRequired, client_ip, render
 from app.routes import api, auth, child, health, parent
+from app.runtime import limit_worker_threads
 from app.version import VERSION
 
 log = logging.getLogger("screentime.app")
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_CONFIG = "/opt/screentime/config/config.yaml"
-DEFAULT_USERS = "/opt/screentime/config/users.yaml"
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -64,17 +62,11 @@ def _log_request(request: Request, status: int, started: float) -> None:
     )
 
 
-def config_paths_from_env() -> tuple[Path, Path]:
-    return (
-        Path(os.environ.get("SCREENTIME_CONFIG", DEFAULT_CONFIG)),
-        Path(os.environ.get("SCREENTIME_USERS", DEFAULT_USERS)),
-    )
-
-
 def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging()
+        limit_worker_threads()
         log.info(
             "starting screentime-controller version=%s mode=%s", VERSION, ctx.config.firewall.mode
         )
@@ -98,6 +90,7 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
     )
     app.state.ctx = ctx
     app.state.templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+    app.state.templates.env.auto_reload = False  # templates never change while running
     app.state.templates.env.globals["version"] = VERSION
     app.state.templates.env.globals["app_name"] = "Screen Time"
     app.state.templates.env.filters["mmss"] = _mmss

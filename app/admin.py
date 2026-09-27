@@ -17,9 +17,8 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.config import ConfigError, load_all
+from app.config import ConfigError, config_paths_from_env, load_all
 from app.context import AppContext, build_context
-from app.main import config_paths_from_env
 from app.models import SESSION_ACTIVE, AuditEvent, DayLock, ParentOverride, SessionRecord
 from app.policy import format_duration
 from app.sessions import CommandResult

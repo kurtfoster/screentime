@@ -384,3 +384,14 @@ def test_vapid_keys_are_generated_once_and_private(tmp_path: Path) -> None:
     assert keys.public_key == again.public_key and len(keys.public_key) == 87  # 65 bytes, base64url
     assert path.stat().st_mode & 0o077 == 0
     assert json.dumps(keys.public_key)
+
+
+def test_worker_threads_are_capped_and_templates_are_not_reloaded(app_env: AppEnv) -> None:
+    """CHG-08: one core gains nothing from anyio's default 40 threads."""
+    import anyio.to_thread
+
+    async def tokens() -> float:
+        return anyio.to_thread.current_default_thread_limiter().total_tokens
+
+    assert app_env.call(tokens) == 8
+    assert app_env.client.app.state.templates.env.auto_reload is False  # type: ignore[attr-defined]

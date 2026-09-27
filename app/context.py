@@ -90,7 +90,7 @@ def build_context(
     calendar = LogicalCalendar(config.zone, config.logical_day_reset)
     db = Database(config.storage.db_file)
     if migrate:
-        db.upgrade()
+        db.upgrade_if_needed()
     with db.session(write=True) as session:
         sync_reference_data(session, config, users)
     secret = load_or_create_secret(config.storage.data_dir / "secret.key")
