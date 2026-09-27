@@ -1,4 +1,4 @@
-<div id="live" class="stack" hx-get="/child/live?k={{ view.state_key }}" hx-trigger="every 5s" hx-swap="outerHTML" data-server-epoch="{{ view.server_epoch }}">
+<div id="live" class="stack" hx-get="/child/live?k={{ view.state_key }}" hx-trigger="every {{ view.poll_seconds }}s" hx-swap="outerHTML" data-server-epoch="{{ view.server_epoch }}">
   {% if view.degraded %}
   <div class="banner banner-warn" role="alert">&#9888; Screen time can't start right now. Ask a parent for help.</div>
   {% endif %}

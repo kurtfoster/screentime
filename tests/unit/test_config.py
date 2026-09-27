@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from app.__main__ import main
 from app.config import ConfigError, load_all, load_config, load_users, parse_hhmm
@@ -315,3 +316,9 @@ def test_service_refuses_to_start_on_invalid_config(tmp_path: Path) -> None:
         capture_output=True, text=True, env=env, cwd=ROOT, timeout=60, check=False,
     )  # fmt: skip
     assert result.returncode != 0 and "Invalid configuration" in result.stderr
+
+
+def test_poll_intervals_must_be_ordered() -> None:
+    with pytest.raises(ValidationError):
+        make_config(ui={"poll_fast_seconds": 20, "poll_idle_seconds": 10})
+    assert make_config().ui.poll_idle_seconds == 15

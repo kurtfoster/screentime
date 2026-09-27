@@ -68,6 +68,8 @@ def live_app(tmp_path: Path, hashes: dict[str, str]) -> Iterator[LiveApp]:
     config = make_config(
         tmp_path,
         notifications={"browser_push_enabled": False, "warning_minutes": 5},
+        # These tests exercise flows, not the production polling cadence (15 s when idle).
+        ui={"poll_fast_seconds": 2, "poll_idle_seconds": 3},
     )
     users = {
         "child8": UserCfg(role="child", child_id="child8", password_hash=hashes["child8"]),

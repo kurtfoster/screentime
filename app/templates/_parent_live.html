@@ -1,4 +1,4 @@
-<div id="live" class="stack" hx-get="/parent/live?k={{ view.state_key }}" hx-trigger="every 5s" hx-swap="outerHTML">
+<div id="live" class="stack" hx-get="/parent/live?k={{ view.state_key }}" hx-trigger="every {{ view.poll_seconds }}s" hx-swap="outerHTML">
   {% if view.degraded %}
   <div class="banner banner-error" role="alert">
     &#9888; Enforcement degraded: the controller can't reach the firewall, so new child sessions are blocked and running sessions may not switch off.

@@ -13,7 +13,7 @@ from tests.e2e.conftest import PASSWORDS, LiveApp, open_page, sign_in, wait_unti
 
 pytestmark = pytest.mark.e2e
 IPAD, KIDS_TV = "192.168.12.30", "192.168.12.40"
-SLOW = 8000  # ms: pages poll every 5 seconds
+SLOW = 8000  # ms: the e2e app polls every 2-3 seconds
 
 
 def sessions(app: LiveApp) -> list[SessionRecord]:
@@ -230,4 +230,26 @@ def test_session_survives_a_page_reload_and_shows_the_right_end_time(
         < sessions(live_app)[0].actual_end_at - sessions(live_app)[0].start_at
         <= timedelta(minutes=60)
     )
+    ctx.close()
+
+
+def test_hidden_dashboards_stop_polling_and_refresh_when_shown(
+    browser: Browser, live_app: LiveApp
+) -> None:
+    ctx, page = open_page(browser)
+    sign_in(page, live_app, "child8")
+    polls: list[str] = []
+    page.on("request", lambda r: polls.append(r.url) if "/child/live" in r.url else None)
+    page.evaluate(
+        "Object.defineProperty(document, 'hidden', {configurable: true, get: () => true});"
+        "document.dispatchEvent(new Event('visibilitychange'));"
+    )
+    page.wait_for_timeout(4000)  # longer than the 3 s idle interval
+    assert polls == []
+    page.evaluate(
+        "Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});"
+        "document.dispatchEvent(new Event('visibilitychange'));"
+    )
+    page.wait_for_timeout(500)
+    assert len(polls) >= 1  # refreshed at once, without waiting for the next poll
     ctx.close()

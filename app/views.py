@@ -47,6 +47,7 @@ class ActiveView:
     device_id: str
     device_name: str
     is_shared: bool
+    end_at: datetime
     end_epoch: float
     end_local: str
     seconds_remaining: int
@@ -77,6 +78,7 @@ class ChildView:
     server_epoch: float
     warning_minutes: int
     warning_seconds: int
+    poll_seconds: int
     state_key: str
 
 
@@ -119,6 +121,7 @@ class ParentView:
     degraded: bool
     degraded_error: str
     clock_synchronised: bool
+    poll_seconds: int
     grants: list[int]
     tv_choices: list[int]
     allow_until_stopped: bool
@@ -136,6 +139,12 @@ class ViewBuilder:
         self.cfg = config
         self.cal = calendar
         self.policy = policy
+
+    def _poll_seconds(self, ends: list[datetime | None], now: datetime) -> int:
+        """Fast polling while any session is within warning_minutes + 1 of its planned end."""
+        window = (self.cfg.warning_minutes + 1) * 60
+        near = any(end is not None and (end - now).total_seconds() <= window for end in ends)
+        return self.cfg.ui.poll_fast_seconds if near else self.cfg.ui.poll_idle_seconds
 
     def _end_text(self, when: datetime | None) -> str:
         return "when stopped" if when is None else self.cal.format_local(when)
@@ -233,6 +242,7 @@ class ViewBuilder:
             server_epoch=now.timestamp(),
             warning_minutes=cfg.warning_minutes,
             warning_seconds=cfg.warning_minutes * 60,
+            poll_seconds=self._poll_seconds([active_view.end_at] if active_view else [], now),
             state_key="",
         )
         view.state_key = _fingerprint(
@@ -250,6 +260,7 @@ class ViewBuilder:
             view.locked,
             degraded,
             view.override_note,
+            view.poll_seconds,  # a new interval needs a fresh fragment, not a 204
         )
         return view
 
@@ -289,6 +300,7 @@ class ViewBuilder:
             device_id=s.device_id,
             device_name=dev.display_name,
             is_shared=dev.type == "shared_tv",
+            end_at=s.planned_end_at,
             end_epoch=s.planned_end_at.timestamp(),
             end_local=self.cal.format_local(s.planned_end_at),
             seconds_remaining=remaining,
@@ -416,6 +428,7 @@ class ViewBuilder:
             degraded=degraded,
             degraded_error=degraded_error,
             clock_synchronised=clock_synchronised,
+            poll_seconds=self._poll_seconds([s.planned_end_at for s in active_sessions], now),
             grants=list(cfg.parents.allowance_grants_minutes),
             tv_choices=list(cfg.parents.tv_session_choices_minutes),
             allow_until_stopped=cfg.parents.allow_until_stopped,
@@ -431,6 +444,7 @@ class ViewBuilder:
             locked,
             degraded,
             clock_synchronised,
+            view.poll_seconds,
         )
         return view
 

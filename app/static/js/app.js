@@ -171,6 +171,12 @@
   window.addEventListener("offline", () => setOffline(true));
   window.addEventListener("online", () => { setOffline(false); refreshLive(); });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshLive(); });
+  // Pause dashboard polling while the page is hidden (an iPad left on the dashboard costs the
+  // controller CPU for nothing). Done here, not with an hx-trigger filter: filters need eval,
+  // which the CSP and htmx config forbid. Becoming visible again refreshes at once (above).
+  document.body.addEventListener("htmx:beforeRequest", (e) => {
+    if (document.hidden && e.detail?.elt?.id === "live") e.preventDefault();
+  });
 
   document.body.addEventListener("htmx:afterSwap", () => { syncClock(); initStartForm(); });
 

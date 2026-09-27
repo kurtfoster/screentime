@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from sqlalchemy import select
@@ -515,3 +516,35 @@ def test_diagnostics_page_shows_required_fields(
         "argon2-cffi",
     ):
         assert needle in page, needle
+
+
+def test_dashboards_poll_fast_only_near_the_end_of_a_session(
+    app_env: AppEnv, child8: Session, parent: Session
+) -> None:
+    def interval(page: str) -> str:
+        match = re.search(r'hx-trigger="every (\d+)s"', page)
+        assert match, page
+        return match.group(1)
+
+    def key(page: str) -> str:
+        match = re.search(r"live\?k=([0-9a-f]+)", page)
+        assert match
+        return match.group(1)
+
+    assert interval(child8.get("/child").text) == "15"
+    assert interval(parent.get("/parent").text) == "15"
+    assert start(child8, "ipad", 30).json()["ok"]  # 10:00 to 10:30
+    app_env.set(10, 23)  # 7 minutes left: outside warning (5) + 1 minutes
+    page = child8.get("/child").text
+    assert interval(page) == "15" and interval(parent.get("/parent").text) == "15"
+    app_env.set(10, 24, second=30)
+    # The interval changed, so the live fragment is re-sent (not a 204) and htmx re-arms.
+    assert child8.get(f"/child/live?k={key(page)}").status_code == 200
+    assert interval(child8.get("/child").text) == "5"
+    assert interval(parent.get("/parent").text) == "5"
+
+
+def test_poll_intervals_are_configurable(env_factory) -> None:  # type: ignore[no-untyped-def]
+    env = env_factory(ui={"poll_fast_seconds": 3, "poll_idle_seconds": 30})
+    child = Session(env.new_client(), "child8")
+    assert 'hx-trigger="every 30s"' in child.get("/child").text

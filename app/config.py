@@ -225,6 +225,19 @@ class StorageCfg(_Strict):
         return self.database_path or self.data_dir / "screentime.db"
 
 
+class UiCfg(_Strict):
+    # Dashboards poll quickly only near a session's end (warning and extension decisions);
+    # otherwise slowly. Each poll costs a few hundred milliseconds of CPU on a Pi 1.
+    poll_fast_seconds: int = Field(default=5, ge=2, le=60)
+    poll_idle_seconds: int = Field(default=15, ge=2, le=300)
+
+    @model_validator(mode="after")
+    def _fast_is_faster(self) -> UiCfg:
+        if self.poll_fast_seconds > self.poll_idle_seconds:
+            raise ValueError("poll_fast_seconds must not exceed poll_idle_seconds")
+        return self
+
+
 class ClockCfg(_Strict):
     # Fail closed until the system clock is known to be right (no RTC on the Pi). Set false
     # only on development machines, where there is no systemd-timesyncd marker to read.
@@ -271,6 +284,7 @@ class AppConfig(_Strict):
     storage: StorageCfg = Field(default_factory=StorageCfg)
     push: PushCfg = Field(default_factory=PushCfg)
     clock: ClockCfg = Field(default_factory=ClockCfg)
+    ui: UiCfg = Field(default_factory=UiCfg)
 
     @field_validator("timezone")
     @classmethod
