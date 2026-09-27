@@ -19,7 +19,7 @@ from app.clock import Clock
 from app.config import AppConfig
 from app.db import Database
 from app.models import NotificationEvent, PushSubscription
-from app.push import PushError, PushGone, PushSender
+from app.push import EndpointRejected, PushError, PushGone, PushSender, check_endpoint
 from app.runtime import run_sync
 from app.secrets_store import fernet_key
 
@@ -57,8 +57,10 @@ class Notifier:
     # -- subscriptions ----------------------------------------------------------------
 
     def subscribe(self, username: str, role: str, endpoint: str, keys: dict[str, Any]) -> None:
-        if not endpoint.startswith("https://") or len(endpoint) > 1024:
-            raise SubscriptionError("endpoint must be an https URL")
+        try:
+            check_endpoint(endpoint, self._cfg.push.allowed_endpoint_hosts)
+        except EndpointRejected as exc:
+            raise SubscriptionError(str(exc)) from exc
         p256dh, auth = keys.get("p256dh"), keys.get("auth")
         if not (
             isinstance(p256dh, str)

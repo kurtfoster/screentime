@@ -19,7 +19,7 @@ from app.timers import Scheduler
 from tests.integration.conftest import IPAD, AppEnv, Session
 
 SUB = {
-    "endpoint": "https://push.example.net/abc",
+    "endpoint": "https://fcm.googleapis.com/fcm/send/abc",
     "keys": {"p256dh": "BPubKey1234567890", "auth": "AuthSecret12345"},
 }
 
@@ -112,6 +112,9 @@ def test_subscription_validation(child8: Session) -> None:
         == 422
     )
     assert child8.post("/api/push/subscribe", {**SUB, "keys": {}}).status_code == 422
+    for lan in ("https://192.168.12.1/", "https://pfsense.home.arpa/x", "https://x.example/1"):
+        res = child8.post("/api/push/subscribe", {**SUB, "endpoint": lan})
+        assert res.status_code == 422 and res.json()["reason"] == "INVALID_SUBSCRIPTION", lan
     assert (
         child8.post("/api/push/subscribe", {"endpoint": "https://x.example/1"}).status_code == 422
     )
@@ -131,8 +134,8 @@ def test_warning_push_goes_only_to_that_child_and_only_once(
     app_env: AppEnv, child8: Session, child12: Session, parent: Session
 ) -> None:
     subscribe(child8)
-    subscribe(child12, endpoint="https://push.example.net/other")
-    subscribe(parent, endpoint="https://push.example.net/parent")
+    subscribe(child12, endpoint="https://web.push.apple.com/other")
+    subscribe(parent, endpoint="https://web.push.apple.com/parent")
     child8.post("/api/child/session/start", {"device_id": "ipad", "minutes": 30})
     app_env.clock.advance(minutes=25)
     app_env.tick()
@@ -149,13 +152,13 @@ def test_session_end_notifies_the_child_and_the_parents(
     app_env: AppEnv, child8: Session, parent: Session
 ) -> None:
     subscribe(child8)
-    subscribe(parent, endpoint="https://push.example.net/parent")
+    subscribe(parent, endpoint="https://web.push.apple.com/parent")
     child8.post("/api/child/session/start", {"device_id": "ipad", "minutes": 15})
     app_env.clock.advance(minutes=16)
     app_env.tick()
     ended = {s[0]["endpoint"]: s[1] for s in app_env.push.sent if s[1]["kind"] == "session_ended"}
-    assert set(ended) == {SUB["endpoint"], "https://push.example.net/parent"}
-    assert ended["https://push.example.net/parent"]["url"] == "/parent"
+    assert set(ended) == {SUB["endpoint"], "https://web.push.apple.com/parent"}
+    assert ended["https://web.push.apple.com/parent"]["url"] == "/parent"
 
 
 def test_enforcement_failure_alerts_parents(app_env: AppEnv, parent: Session) -> None:

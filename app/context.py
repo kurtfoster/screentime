@@ -97,7 +97,9 @@ def build_context(
             keys = VapidKeys(
                 config.push.vapid_key_file or config.storage.data_dir / "vapid_private.pem"
             )
-            push_sender = WebPushSender(keys, config.push.vapid_subject)
+            push_sender = WebPushSender(
+                keys, config.push.vapid_subject, config.push.allowed_endpoint_hosts
+            )
             public_key = keys.public_key
         except Exception:
             log.exception("web push disabled: could not initialise VAPID keys")

@@ -89,5 +89,5 @@ files = ["app", "scripts"]
 exclude = ["migrations"]
 
 [[tool.mypy.overrides]]
-module = ["pywebpush.*", "py_vapid.*", "dns.*", "argon2.*"]
+module = ["http_ece.*", "py_vapid.*", "dns.*", "argon2.*"]
 ignore_missing_imports = true

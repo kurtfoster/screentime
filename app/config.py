@@ -225,6 +225,26 @@ class StorageCfg(_Strict):
 class PushCfg(_Strict):
     vapid_subject: str = "mailto:admin@screen.home.arpa"
     vapid_key_file: Path | None = None
+    # Subscription endpoints must be on one of these hosts or their subdomains, so a signed-in
+    # user cannot make the controller send requests to arbitrary (LAN) addresses.
+    allowed_endpoint_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "web.push.apple.com",
+            "fcm.googleapis.com",
+            "updates.push.services.mozilla.com",
+            "notify.windows.com",
+        ],
+        min_length=1,
+    )
+
+    @field_validator("allowed_endpoint_hosts")
+    @classmethod
+    def _valid_hosts(cls, value: list[str]) -> list[str]:
+        cleaned = [raw.strip().lower().strip(".") for raw in value]
+        for host in cleaned:
+            if not _HOSTNAME_RE.match(host) or "." not in host:
+                raise ValueError(f"{host!r} is not a valid push service host name")
+        return cleaned
 
 
 class AppConfig(_Strict):

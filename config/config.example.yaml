@@ -120,3 +120,8 @@ storage:
 
 push:
   vapid_subject: "mailto:parents@example.invalid"   # contact address sent to push services
+  allowed_endpoint_hosts:           # push services a browser subscription may point at
+    - web.push.apple.com            # iPhone / iPad Home Screen apps
+    - fcm.googleapis.com            # Chrome, Edge on Android
+    - updates.push.services.mozilla.com
+    - notify.windows.com
