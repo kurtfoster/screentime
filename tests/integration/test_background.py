@@ -340,6 +340,7 @@ def test_database_runs_in_wal_mode_with_foreign_keys(app_env: AppEnv) -> None:
     with app_env.ctx.db.session() as db:
         assert db.execute(text("PRAGMA journal_mode")).scalar_one() == "wal"
         assert db.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
+        assert db.execute(text("PRAGMA synchronous")).scalar_one() == 2  # FULL: power-cut safe
     assert app_env.ctx.db.check()
 
 

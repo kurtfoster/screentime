@@ -18,7 +18,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Refuse to start (with a readable error in the journal) if the configuration is invalid.
 ExecStartPre=/opt/screentime/venv/bin/python -m app --check-config
-ExecStart=/opt/screentime/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-server-header --no-access-log
+ExecStart=/opt/screentime/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-server-header --no-access-log
 Restart=on-failure
 RestartSec=3
 # A Raspberry Pi 1 needs about a minute to import the libraries; 90 s (the default) is too tight.
@@ -29,7 +29,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+# data holds the database and the SSH control socket (ssh-mux); .ssh is written only for
+# known_hosts. /run/screentime (tmpfs) takes the once-a-minute status snapshot.
 ReadWritePaths=/opt/screentime/data /opt/screentime/.ssh
+RuntimeDirectory=screentime
+RuntimeDirectoryMode=0700
 PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

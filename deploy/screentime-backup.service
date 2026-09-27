@@ -1,16 +1,19 @@
 [Unit]
 Description=Screen-Time Controller backup
 After=screentime.service
+# Mount the USB drive if it is in /etc/fstab, but run even if it is missing: backup.sh then
+# records the failure for the diagnostics page instead of silently not running.
+WantsMountsFor=/mnt/screentime-backup
 
 [Service]
 Type=oneshot
 User=screentime
 Group=screentime
 Environment=HOME=/opt/screentime
-ExecStart=/opt/screentime/app/deploy/backup.sh
+ExecStart=/opt/screentime/app/deploy/backup.sh --dest /mnt/screentime-backup
 UMask=0077
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
-ReadWritePaths=/opt/screentime/backups /opt/screentime/data
+ReadWritePaths=/opt/screentime/data -/mnt/screentime-backup

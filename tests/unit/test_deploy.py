@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -56,11 +58,8 @@ def test_install_lays_out_directories_files_and_permissions(tmp_path: Path) -> N
     prefix = tmp_path / "opt"
     res = install(prefix)
     assert res.returncode == 0, res.stderr
-    assert (
-        mode(prefix / "data") == 0o700
-        and mode(prefix / ".ssh") == 0o700
-        and mode(prefix / "backups") == 0o700
-    )
+    assert mode(prefix / "data") == 0o700 and mode(prefix / ".ssh") == 0o700
+    assert not (prefix / "backups").exists()  # backups go to a separate drive, not the SD card
     assert mode(prefix / "config") == 0o750
     assert mode(prefix / "config" / "users.yaml") == 0o600
     for rel in (
@@ -268,8 +267,16 @@ def make_prefix(tmp_path: Path) -> Path:
     return prefix
 
 
-def backup(prefix: Path, *extra: str) -> subprocess.CompletedProcess[str]:
-    return sh(DEPLOY / "backup.sh", "--prefix", prefix, "--python", sys.executable, *extra)
+def backup(
+    prefix: Path, *extra: str, mounted_check: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Back up into <prefix>/backups; tests have no USB drive, so the mount check is off by default."""
+    args: list[str | Path] = ["--prefix", prefix, "--python", sys.executable]
+    if "--dest" not in extra:
+        args += ["--dest", prefix / "backups"]
+    if not mounted_check:
+        args.append("--allow-unmounted")
+    return sh(DEPLOY / "backup.sh", *args, *extra)
 
 
 def test_backup_is_consistent_private_and_complete(tmp_path: Path) -> None:
@@ -306,6 +313,7 @@ def test_backup_is_consistent_private_and_complete(tmp_path: Path) -> None:
 def test_backup_retention_keeps_the_newest_n(tmp_path: Path) -> None:
     prefix = make_prefix(tmp_path)
     dest = prefix / "backups"
+    dest.mkdir(mode=0o700)
     for i in range(6):
         old = dest / f"screentime-2026010{i}-030000.tar.gz"
         old.write_text("old")
@@ -325,8 +333,39 @@ def test_backup_defaults_to_fourteen_and_validates_arguments(tmp_path: Path) -> 
     prefix = make_prefix(tmp_path)
     assert backup(prefix, "--keep", "0").returncode == 64
     assert backup(prefix, "--bogus").returncode == 64
-    missing = sh(DEPLOY / "backup.sh", "--prefix", tmp_path / "nothing", "--python", sys.executable)
+    missing = backup(tmp_path / "nothing")
     assert missing.returncode == 1 and "database not found" in missing.stderr
+
+
+def test_backup_refuses_a_destination_that_is_not_a_mounted_drive(tmp_path: Path) -> None:
+    prefix = make_prefix(tmp_path)
+    assert backup(prefix, "--allow-unmounted").returncode == 0
+    first = json.loads((prefix / "data" / "backup-status.json").read_text())
+    assert first["result"] == "ok" and first["detail"].endswith(".tar.gz")
+    assert first["last_success_at"] == first["at"]
+
+    unmounted = tmp_path / "usb"  # a plain directory: the drive is not plugged in
+    res = backup(prefix, "--dest", str(unmounted), mounted_check=True)
+    assert res.returncode == 1 and "not a mounted drive" in res.stderr
+    assert not unmounted.exists()  # nothing was written in its place
+    status_file = prefix / "data" / "backup-status.json"
+    status = json.loads(status_file.read_text())
+    assert status["result"] == "failed" and "not a mounted drive" in status["detail"]
+    assert status["last_success_at"] == first["at"]  # the last good backup is still known
+    assert mode(status_file) == 0o600
+
+
+@pytest.mark.skipif(shutil.which("mountpoint") is None, reason="mountpoint not installed")
+def test_a_directory_inside_another_mount_does_not_count_as_the_drive(tmp_path: Path) -> None:
+    prefix = make_prefix(tmp_path)
+    if subprocess.run(["mountpoint", "-q", "/dev/shm"], check=False).returncode != 0:
+        pytest.skip("no tmpfs at /dev/shm to stand in for the USB drive")
+    dest = Path(tempfile.mkdtemp(dir="/dev/shm"))
+    try:
+        # A directory on a mount is not the mount itself: still refused.
+        assert backup(prefix, "--dest", str(dest), mounted_check=True).returncode == 1
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
 
 
 def test_restore_onto_a_fresh_prefix_reproduces_the_database_and_config(tmp_path: Path) -> None:
@@ -394,7 +433,8 @@ def test_service_unit_matches_the_specification() -> None:
     assert "SCREENTIME_CONFIG=/opt/screentime/config/config.yaml" in s["Environment"]
     assert "SCREENTIME_USERS=/opt/screentime/config/users.yaml" in s["Environment"]
     exec_start = s["ExecStart"][0]
-    assert exec_start.startswith("/opt/screentime/venv/bin/uvicorn app.main:app")
+    # python -m: with Raspberry Pi OS packages the venv has no uvicorn script of its own.
+    assert exec_start.startswith("/opt/screentime/venv/bin/python -m uvicorn app.main:app")
     assert "--host 127.0.0.1" in exec_start and "--port 8080" in exec_start
     assert s["Restart"] == ["on-failure"] and s["RestartSec"] == ["3"]
     assert s["NoNewPrivileges"] == ["true"] and s["PrivateTmp"] == ["true"]
@@ -402,12 +442,21 @@ def test_service_unit_matches_the_specification() -> None:
     # No RTC: order after NTP sync, and allow a slow Raspberry Pi 1 start (CHG-06, CHG-08).
     assert "time-sync.target" in s["After"][0] and "time-sync.target" in s["Wants"][0]
     assert s["TimeoutStartSec"] == ["300"]
+    assert s["RuntimeDirectory"] == ["screentime"] and s["RuntimeDirectoryMode"] == ["0700"]
+
+
+def test_backup_unit_uses_the_usb_drive_without_depending_on_it() -> None:
+    s = unit_settings((DEPLOY / "screentime-backup.service").read_text())
+    assert s["WantsMountsFor"] == ["/mnt/screentime-backup"]
+    assert "RequiresMountsFor" not in s  # a missing drive must still produce a recorded failure
+    assert s["ExecStart"] == ["/opt/screentime/app/deploy/backup.sh --dest /mnt/screentime-backup"]
+    assert s["ReadWritePaths"] == ["/opt/screentime/data -/mnt/screentime-backup"]
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze not installed")
 def test_systemd_units_pass_systemd_analyze(tmp_path: Path) -> None:
     prefix = tmp_path / "opt"
-    for rel in ("venv/bin/python", "venv/bin/uvicorn", "app/deploy/backup.sh"):
+    for rel in ("venv/bin/python", "app/deploy/backup.sh"):
         target = prefix / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("#!/bin/sh\n")
@@ -460,3 +509,129 @@ def test_installer_renders_nginx_placeholders(tmp_path: Path) -> None:
     )
     assert "@" not in re.sub(r"'[^']*'", "", rendered)
     assert "ssl_certificate     /etc/screentime/tls/screen-fullchain.crt;" in rendered
+
+
+# --- platform detection (Raspberry Pi 1 / Zero) --------------------------------------------------
+
+
+def fake_uname(tmp_path: Path, machine: str) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "uname"
+    stub.write_text(
+        f'#!/bin/sh\n[ "$1" = "-m" ] && echo {machine} && exit 0\nexec /usr/bin/uname "$@"\n'
+    )
+    stub.chmod(0o755)
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+def test_armv6_selects_raspberry_pi_os_packages(tmp_path: Path) -> None:
+    env = fake_uname(tmp_path, "armv6l")
+    res = sh(
+        DEPLOY / "install.sh",
+        "--no-system",
+        "--no-tls",
+        "--prefix",
+        tmp_path / "opt",
+        "--dry-run",
+        env=env,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "Machine armv6l; Python libraries from: apt" in res.stdout
+    assert "sudo apt install python3 python3-venv python3-fastapi" in res.stdout
+    assert "--system-site-packages" in res.stdout and "pip install" not in res.stdout
+    assert "smoke_test.py" in res.stdout
+    assert "make_password_hash.py --calibrate" in res.stdout
+
+
+def test_other_machines_keep_pip_unless_told_otherwise(tmp_path: Path) -> None:
+    env = fake_uname(tmp_path, "x86_64")
+    res = sh(
+        DEPLOY / "install.sh",
+        "--no-system",
+        "--no-tls",
+        "--prefix",
+        tmp_path / "opt",
+        "--dry-run",
+        env=env,
+    )
+    assert "Python libraries from: pip" in res.stdout and "pip install" in res.stdout
+    assert "--calibrate" not in res.stdout
+    forced = sh(
+        DEPLOY / "install.sh",
+        "--no-system",
+        "--no-tls",
+        "--prefix",
+        tmp_path / "o2",
+        "--dry-run",
+        "--deps",
+        "apt",
+        env=env,
+    )
+    assert "Python libraries from: apt" in forced.stdout
+    assert sh(DEPLOY / "install.sh", "--deps", "conda", env=env).returncode == 64
+
+
+def test_gpu_memory_split_is_offered_on_armv6(tmp_path: Path) -> None:
+    env = fake_uname(tmp_path, "armv6l")
+    boot = tmp_path / "config.txt"
+    boot.write_text("dtparam=audio=on\n")
+    args = (
+        "--no-system",
+        "--skip-venv",
+        "--no-tls",
+        "--prefix",
+        tmp_path / "opt",
+        "--boot-config",
+        boot,
+    )
+    declined = sh(DEPLOY / "install.sh", *args, stdin="n\n", env=env)
+    assert declined.returncode == 0 and "gpu_mem=16" not in boot.read_text()
+    assert "gpu_mem not changed" in declined.stderr
+    accepted = sh(DEPLOY / "install.sh", *args, "--yes", env=env)
+    assert accepted.returncode == 0 and boot.read_text().rstrip().endswith("gpu_mem=16")
+    assert "Reboot for gpu_mem=16" in accepted.stdout
+    again = sh(DEPLOY / "install.sh", *args, "--yes", env=env)
+    assert "already set" in again.stdout and boot.read_text().count("gpu_mem=16") == 1
+    other = tmp_path / "other.txt"
+    other.write_text("gpu_mem=64\n")
+    kept = sh(DEPLOY / "install.sh", *args[:-1], other, "--yes", env=env)
+    assert other.read_text() == "gpu_mem=64\n" and "different gpu_mem" in kept.stderr
+
+
+def test_gpu_memory_is_left_alone_on_other_machines(tmp_path: Path) -> None:
+    env = fake_uname(tmp_path, "aarch64")
+    boot = tmp_path / "config.txt"
+    boot.write_text("")
+    res = sh(
+        DEPLOY / "install.sh",
+        "--no-system",
+        "--skip-venv",
+        "--no-tls",
+        "--prefix",
+        tmp_path / "opt",
+        "--boot-config",
+        boot,
+        "--yes",
+        env=env,
+    )
+    assert res.returncode == 0 and boot.read_text() == ""
+
+
+def test_the_apt_package_list_is_what_the_pi_needs() -> None:
+    packages = [
+        ln.strip()
+        for ln in (DEPLOY / "apt-packages.txt").read_text().splitlines()
+        if ln.strip() and not ln.startswith("#")
+    ]
+    assert "python3-python-multipart" in packages and "python3-multipart" not in packages
+    assert "python3-argon2" in packages and "python3-py-vapid" in packages
+    assert not any("webpush" in p or "aiohttp" in p for p in packages)
+    containerfile = (DEPLOY / "Containerfile.trixie").read_text()
+    assert "apt-packages.txt" in containerfile
+
+
+def test_smoke_test_passes_here() -> None:
+    res = sh(sys.executable, ROOT / "scripts" / "smoke_test.py")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "Smoke test passed." in res.stdout and "argon2id hash and verify ... ok" in res.stdout

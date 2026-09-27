@@ -117,6 +117,7 @@ security:
 
 storage:
   data_dir: /opt/screentime/data    # SQLite database, app secret and VAPID key live here
+  runtime_dir: /run/screentime      # status snapshot for admin_cli (tmpfs: no SD card writes)
 
 clock:
   # The Pi has no battery-backed clock. Until systemd-timesyncd has synchronised (NTP from

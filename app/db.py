@@ -54,7 +54,9 @@ def _on_connect(dbapi_connection: Any, _record: Any) -> None:
     dbapi_connection.isolation_level = None  # we emit BEGIN ourselves
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
+    # FULL: a committed session or grant survives a power cut (a Pi 1 has no battery and
+    # SD cards reorder writes). The write rate is a few rows a minute, so the cost is nil.
+    cursor.execute("PRAGMA synchronous=FULL")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA busy_timeout=10000")
     cursor.close()
