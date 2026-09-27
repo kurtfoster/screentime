@@ -19,6 +19,16 @@
   </section>
 
   <section class="card stack">
+    <h2>Resources and timing</h2>
+    <table>
+      {% for label, value in resources %}
+      <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
+      {% endfor %}
+    </table>
+    <p class="muted small">Upgrade the hardware if, over a normal week, tick lag often exceeds 10 s, available memory stays below 100 MB, or starts feel slow (OPERATIONS.md).</p>
+  </section>
+
+  <section class="card stack">
     <h2>Active table (SCR_ACTIVE)</h2>
     <table>
       <tr><th>Desired</th><td class="mono">{{ desired | join(", ") or "none" }}</td></tr>

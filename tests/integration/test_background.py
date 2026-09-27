@@ -395,3 +395,74 @@ def test_worker_threads_are_capped_and_templates_are_not_reloaded(app_env: AppEn
 
     assert app_env.call(tokens) == 8
     assert app_env.client.app.state.templates.env.auto_reload is False  # type: ignore[attr-defined]
+
+
+def test_resource_sample_is_published_privately_and_warns_on_low_memory(
+    app_env: AppEnv,
+    child8: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A login has happened (so a verify time exists) and a grant was stored as a firewall event.
+    started = child8.post("/api/child/session/start", {"device_id": "ipad", "minutes": 15})
+    assert started.json()["ok"]
+    monkeypatch.setattr("app.resources.available_memory_mb", lambda: 50)
+    with caplog.at_level("WARNING", logger="screentime.resources"):
+        snap = app_env.ctx.monitor.sample()
+    assert snap.low_memory and snap.argon2_verify_seconds is not None
+    assert snap.ssh_operations >= 1 and snap.clock_synchronised
+    path = app_env.ctx.monitor.status_file
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(path.read_text())["available_mb"] == 50
+    assert any("available memory is low" in r.message for r in caplog.records)
+
+
+def test_diagnostics_and_admin_status_show_resources(app_env: AppEnv, parent: Session) -> None:
+    from app.admin import main as admin_main
+
+    page = parent.get("/parent/diagnostics").text
+    for needle in ("Resources and timing", "Timer tick lag", "pfSense SSH p95", "Last backup"):
+        assert needle in page, needle
+    lines: list[str] = []
+    admin_main(["status"], ctx=app_env.ctx, out=lines.append)
+    assert "no snapshot" in "\n".join(lines)
+    app_env.ctx.monitor.sample()
+    lines.clear()
+    admin_main(["status"], ctx=app_env.ctx, out=lines.append)
+    text = "\n".join(lines)
+    assert "Resources (service snapshot taken" in text and "System memory available:" in text
+
+
+def test_slow_ticks_are_measured_and_logged(
+    app_env: AppEnv, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.timers.TICK_LAG_WARN_SECONDS", 0.05)
+
+    class Orch:
+        class enforcement:
+            @staticmethod
+            async def reconcile() -> None:
+                return None
+
+        async def tick(self) -> None:
+            await asyncio.sleep(0.1)  # a tick that takes longer than its interval
+
+    class Resolver:
+        async def refresh(self) -> None:
+            return None
+
+        def next_interval_seconds(self) -> float:
+            return 60.0
+
+    async def scenario() -> Scheduler:
+        sched = Scheduler(Orch(), Resolver(), app_env.ctx.config, tick_seconds=0.01)  # type: ignore[arg-type]
+        sched.start()
+        await asyncio.sleep(0.35)
+        await sched.stop()
+        return sched
+
+    with caplog.at_level("WARNING", logger="screentime.app"):
+        sched = asyncio.run(scenario())
+    lag = sched.tick_lag.max_lag()
+    assert lag is not None and 0.07 <= lag < 1.0
+    assert sum("timer tick ran" in r.message for r in caplog.records) == 1  # rate-limited

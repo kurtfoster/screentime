@@ -231,6 +231,13 @@ class SecurityCfg(_Strict):
 class StorageCfg(_Strict):
     data_dir: Path = Path("/opt/screentime/data")
     database_path: Path | None = None
+    # Where the once-a-minute resource snapshot is written. A tmpfs such as /run/screentime
+    # (systemd RuntimeDirectory) avoids SD card writes; defaults to data_dir.
+    runtime_dir: Path | None = None
+
+    @property
+    def status_dir(self) -> Path:
+        return self.runtime_dir or self.data_dir
 
     @property
     def db_file(self) -> Path:

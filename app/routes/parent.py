@@ -81,6 +81,7 @@ async def diagnostics(request: Request, principal: Principal = Depends(parent_pa
             "fw_events": fw_events,
             "audit": audit,
             "dependencies": dependency_report(),
+            "resources": ctx.monitor.snapshot().lines(),
         }
 
     data = await run_sync(load)

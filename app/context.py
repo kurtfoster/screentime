@@ -31,6 +31,7 @@ from app.notifications import Notifier
 from app.orchestrator import Orchestrator
 from app.policy import PolicyEngine
 from app.push import PushSender
+from app.resources import LagTracker, ResourceMonitor
 from app.secrets_store import load_or_create_secret
 from app.sessions import SessionService
 from app.timers import Scheduler
@@ -57,6 +58,7 @@ class AppContext:
     auth: AuthService
     scheduler: Scheduler
     action_limiter: SlidingWindowLimiter
+    monitor: ResourceMonitor
 
     def maintenance(self) -> None:
         """Hourly housekeeping: expired web sessions and old firewall events."""
@@ -130,6 +132,17 @@ def build_context(
     resolver = EducationResolver(config, dns, firewall, clock)
     notifier = Notifier(db, config, clock, secret, push_sender, public_key)
     orchestrator = Orchestrator(db, config, clock, sessions, enforcement, notifier)
+    auth = AuthService(db, config, users, clock, secret)
+    tick_lag = LagTracker()
+    monitor = ResourceMonitor(
+        db,
+        clock,
+        tick_lag,
+        config.storage.status_dir,
+        config.storage.data_dir,
+        clock_synchronised=enforcement.clock_synchronised,
+        last_verify_seconds=lambda: auth.passwords.last_verify_seconds,
+    )
     ctx = AppContext(
         config=config,
         users=users,
@@ -144,9 +157,17 @@ def build_context(
         resolver=resolver,
         notifier=notifier,
         orchestrator=orchestrator,
-        auth=AuthService(db, config, users, clock, secret),
+        auth=auth,
         scheduler=None,  # type: ignore[arg-type]  # assigned below (needs ctx.maintenance)
         action_limiter=SlidingWindowLimiter(config.security.grant_actions_per_minute),
+        monitor=monitor,
     )
-    ctx.scheduler = Scheduler(orchestrator, resolver, config, ctx.maintenance)
+    ctx.scheduler = Scheduler(
+        orchestrator,
+        resolver,
+        config,
+        ctx.maintenance,
+        tick_lag=tick_lag,
+        sample_resources=monitor.sample,
+    )
     return ctx

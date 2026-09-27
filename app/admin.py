@@ -21,6 +21,7 @@ from app.config import ConfigError, config_paths_from_env, load_all
 from app.context import AppContext, build_context
 from app.models import SESSION_ACTIVE, AuditEvent, DayLock, ParentOverride, SessionRecord
 from app.policy import format_duration
+from app.resources import ResourceSnapshot, load_status_file
 from app.sessions import CommandResult
 from app.state import allowance_summary
 from app.version import VERSION
@@ -32,12 +33,31 @@ def _fmt(ctx: AppContext, when: Any) -> str:
     return "-" if when is None else str(ctx.calendar.local(when).strftime("%a %d %b %H:%M:%S"))
 
 
+def _print_resources(ctx: AppContext, out: Out) -> None:
+    """The running service's own snapshot: tick lag and verify times live only in its memory."""
+    path = ctx.monitor.status_file
+    data = load_status_file(path)
+    try:
+        if data is None:
+            raise TypeError
+        if isinstance(data.get("load"), list):
+            data["load"] = tuple(data["load"])
+        snap = ResourceSnapshot(**data)
+    except TypeError:
+        out(f"Resources: no snapshot at {path} (is the service running?)")
+        return
+    out(f"Resources (service snapshot taken {snap.taken_at}):")
+    for label, value in snap.lines():
+        out(f"  {label + ':':34} {value}")
+
+
 def cmd_status(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     now = ctx.clock.now()
     day = ctx.calendar.logical_day(now)
     out(f"Screen-Time Controller {VERSION}")
     out(f"Local time {_fmt(ctx, now)} ({ctx.config.timezone}); logical day {day}")
     out(f"Firewall mode: {ctx.config.firewall.mode}")
+    _print_resources(ctx, out)
     with ctx.db.session() as db:
         for child_id, child in ctx.config.children.items():
             s = allowance_summary(db, ctx.config, ctx.calendar, child_id, now)
