@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -12,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.audit import configure_logging
 from app.bootstrap import sync_reference_data
 from app.clock import FakeClock, LogicalCalendar
 from app.config import AppConfig, UserCfg
@@ -146,6 +148,23 @@ class Env:
     def set(self, hour: int, minute: int = 0, day: date = MONDAY, second: int = 0) -> datetime:
         self.clock.set(at(hour, minute, day, second))
         return self.clock.now()
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """The app runs on asyncio under uvicorn. Older anyio plugins (Debian) also try trio."""
+    return "asyncio"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _capturable_app_logging() -> None:
+    """Install the app's log handler once, but let records reach pytest's caplog as well.
+
+    configure_logging() stops propagation so journald sees each line once. Older pytest
+    releases (Debian Trixie ships 8.3) only capture through the root logger.
+    """
+    configure_logging()
+    logging.getLogger("screentime").propagate = True
 
 
 @pytest.fixture(autouse=True)

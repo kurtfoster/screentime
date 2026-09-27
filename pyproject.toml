@@ -22,7 +22,6 @@ dependencies = [
     "argon2-cffi>=21.1",
     "pyyaml>=6.0",
     "dnspython>=2.7",
-    "pywebpush>=2.0",
     "cryptography>=43",
     "py-vapid>=1.9",
     "http-ece>=1.2",

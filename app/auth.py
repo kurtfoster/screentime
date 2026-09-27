@@ -58,12 +58,12 @@ class LoginResult:
 
 
 def hash_password(password: str) -> str:
-    return _hasher.hash(password)
+    return str(_hasher.hash(password))  # argon2-cffi 21.1 is untyped
 
 
 def verify_password(stored_hash: str, password: str) -> bool:
     try:
-        return _hasher.verify(stored_hash, password)
+        return bool(_hasher.verify(stored_hash, password))
     except (VerificationError, InvalidHash):
         return False
 

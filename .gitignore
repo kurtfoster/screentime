@@ -25,3 +25,4 @@ config/users.dev.yaml
 
 # Per-developer Claude Code settings
 .claude/settings.local.json
+.venv-trixie/

@@ -1,0 +1,19 @@
+# PyPI equivalents of the Raspberry Pi OS Trixie (Debian 13) packages the Pi runs.
+# Used by `scripts/check.sh --profile trixie`. Source: Pi1_Adaptation_Plan.md section 3.2,
+# confirmed against `apt install` on the Pi (Gate 0, 27 September 2026).
+# deploy/Containerfile.trixie is the higher-fidelity check: it uses the Debian builds themselves.
+fastapi==0.115.11
+starlette==0.46.1
+pydantic==2.10.6
+pydantic-core==2.27.2
+sqlalchemy==2.0.40
+alembic==1.13.2
+argon2-cffi==21.1.0
+cryptography==43.0.0
+py-vapid==1.9.2
+http-ece==1.2.1
+dnspython==2.7.0
+uvicorn==0.32.0
+python-multipart==0.0.20
+jinja2==3.1.6
+pyyaml==6.0.2

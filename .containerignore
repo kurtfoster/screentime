@@ -1,0 +1,13 @@
+.git
+.venv
+.venv-*
+data
+htmlcov
+.coverage
+coverage.xml
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+config/users.yaml
+config/users.dev.yaml

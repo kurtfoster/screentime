@@ -1,0 +1,25 @@
+# Gate 1 parity check: the test suite against the exact Debian Trixie builds of every runtime
+# library (deploy/apt-packages.txt), on Python 3.13. The build fails if any test fails.
+#
+#   podman build -f deploy/Containerfile.trixie .
+#
+# Optional ARMv6 emulation (catches ARMv7-only binaries; slow, needs qemu-user-static):
+#   podman build --platform linux/arm/v6 --env QEMU_CPU=arm1176 -f deploy/Containerfile.trixie .
+FROM docker.io/library/debian:trixie
+
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1
+COPY deploy/apt-packages.txt /tmp/apt-packages.txt
+# Test tools come from Debian too, so nothing in the runtime path is a PyPI build.
+RUN apt-get update \
+    && grep -Ev '^\s*(#|$)' /tmp/apt-packages.txt | xargs apt-get install -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends python3-pytest python3-httpx python3-anyio \
+    && rm -rf /var/lib/apt/lists/*
+
+# The installer tests refuse to run as root, as the real installer does without --no-system.
+RUN useradd --create-home tester
+COPY --chown=tester:tester . /src
+USER tester
+WORKDIR /src
+
+RUN python3 -m app --check-deps
+RUN python3 -m pytest -q -m "not e2e" -p no:cacheprovider
