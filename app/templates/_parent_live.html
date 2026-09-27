@@ -6,6 +6,12 @@
   </div>
   {% endif %}
 
+  {% if not view.clock_synchronised %}
+  <div class="banner banner-error" role="alert">
+    &#9888; The controller's clock is not synchronised yet (it has no battery clock, so it waits for NTP after a restart). No device is being granted and children cannot start sessions until it is. If this lasts more than a few minutes, check that pfSense's NTP service is running.
+  </div>
+  {% endif %}
+
   {% for c in view.children %}
   <section class="card stack" aria-label="{{ c.name }}">
     <div class="row spread">

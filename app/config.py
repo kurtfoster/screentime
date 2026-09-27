@@ -222,6 +222,13 @@ class StorageCfg(_Strict):
         return self.database_path or self.data_dir / "screentime.db"
 
 
+class ClockCfg(_Strict):
+    # Fail closed until the system clock is known to be right (no RTC on the Pi). Set false
+    # only on development machines, where there is no systemd-timesyncd marker to read.
+    require_sync: bool = True
+    sync_marker: Path = Path("/run/systemd/timesync/synchronized")
+
+
 class PushCfg(_Strict):
     vapid_subject: str = "mailto:admin@screen.home.arpa"
     vapid_key_file: Path | None = None
@@ -260,6 +267,7 @@ class AppConfig(_Strict):
     security: SecurityCfg = Field(default_factory=SecurityCfg)
     storage: StorageCfg = Field(default_factory=StorageCfg)
     push: PushCfg = Field(default_factory=PushCfg)
+    clock: ClockCfg = Field(default_factory=ClockCfg)
 
     @field_validator("timezone")
     @classmethod

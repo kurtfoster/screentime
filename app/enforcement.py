@@ -15,7 +15,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from app.clock import Clock
+from app.clock import AssumeSynchronised, Clock, ClockSync
 from app.config import AppConfig
 from app.db import Database
 from app.firewall.audited import AuditedFirewall
@@ -37,9 +37,16 @@ class ReconcileResult:
 
 class EnforcementService:
     def __init__(
-        self, db: Database, config: AppConfig, clock: Clock, firewall: AuditedFirewall
+        self,
+        db: Database,
+        config: AppConfig,
+        clock: Clock,
+        firewall: AuditedFirewall,
+        clock_sync: ClockSync | None = None,
     ) -> None:
         self._db = db
+        self._clock_sync = clock_sync or AssumeSynchronised()
+        self._last_sync_state: bool | None = None
         self._cfg = config
         self._clock = clock
         self.firewall = firewall
@@ -53,6 +60,20 @@ class EnforcementService:
         self.desired: set[str] = set()
         self.actual: set[str] | None = None
 
+    def clock_synchronised(self) -> bool:
+        """Whether the system clock can be trusted; logs each change of state once."""
+        synced = self._clock_sync.synchronised()
+        if synced != self._last_sync_state:
+            if synced:
+                log.info("system clock synchronised: grants and child starts are enabled")
+            else:
+                log.warning(
+                    "system clock not yet synchronised: no device will be granted and child "
+                    "starts are refused until NTP succeeds"
+                )
+            self._last_sync_state = synced
+        return synced
+
     def ips_for_devices(self, device_ids: Iterable[str]) -> set[str]:
         return {self._cfg.devices[d].ip for d in device_ids if d in self._cfg.devices}
 
@@ -61,7 +82,11 @@ class EnforcementService:
         async with self._lock:
             now = self._clock.now()
             self.last_reconcile_at = now
-            desired = await run_sync(self._read_desired, now)
+            # With an untrusted clock, sessions that really ended can look current, so grant
+            # nothing at all (fail closed) until the clock is synchronised.
+            desired = (
+                await run_sync(self._read_desired, now) if self.clock_synchronised() else set()
+            )
             self.desired = desired
             self._pending_kills |= set(kill_ips)
             result = ReconcileResult(desired=desired)

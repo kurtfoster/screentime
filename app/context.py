@@ -10,7 +10,14 @@ from sqlalchemy import delete
 
 from app.auth import AuthService, SlidingWindowLimiter
 from app.bootstrap import sync_reference_data
-from app.clock import Clock, LogicalCalendar, SystemClock
+from app.clock import (
+    AssumeSynchronised,
+    Clock,
+    ClockSync,
+    LogicalCalendar,
+    SystemClock,
+    TimesyncdMarker,
+)
 from app.config import AppConfig, UserCfg
 from app.db import Database
 from app.enforcement import EnforcementService
@@ -71,8 +78,15 @@ def build_context(
     push_sender: PushSender | None = None,
     migrate: bool = True,
     enable_push: bool = True,
+    clock_sync: ClockSync | None = None,
 ) -> AppContext:
     clock = clock or SystemClock()
+    if clock_sync is None:
+        clock_sync = (
+            TimesyncdMarker(config.clock.sync_marker)
+            if config.clock.require_sync
+            else AssumeSynchronised()
+        )
     calendar = LogicalCalendar(config.zone, config.logical_day_reset)
     db = Database(config.storage.db_file)
     if migrate:
@@ -106,7 +120,7 @@ def build_context(
 
     policy = PolicyEngine(config, calendar)
     sessions = SessionService(db, config, calendar, clock)
-    enforcement = EnforcementService(db, config, clock, firewall)
+    enforcement = EnforcementService(db, config, clock, firewall, clock_sync)
     if dns is None:
         from app.firewall.resolver import DnsPythonClient
 

@@ -36,6 +36,7 @@ _STATUS_FOR_REASON: dict[Reason, int] = {
     Reason.UNKNOWN_DEVICE: 404,
     Reason.ENFORCEMENT_DEGRADED: 503,
     Reason.ENFORCEMENT_FAILED: 503,
+    Reason.CLOCK_NOT_SYNCED: 503,
 }
 
 

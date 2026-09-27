@@ -44,3 +44,6 @@ security:
 
 storage:
   data_dir: ./data
+
+clock:
+  require_sync: false               # no systemd-timesyncd marker on a development machine

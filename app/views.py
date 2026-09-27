@@ -118,6 +118,7 @@ class ParentView:
     locked_accounts: list[str]
     degraded: bool
     degraded_error: str
+    clock_synchronised: bool
     grants: list[int]
     tv_choices: list[int]
     allow_until_stopped: bool
@@ -305,7 +306,14 @@ class ViewBuilder:
         )
 
     def parent_view(
-        self, db: Session, now: datetime, *, degraded: bool, degraded_error: str, locked: list[str]
+        self,
+        db: Session,
+        now: datetime,
+        *,
+        degraded: bool,
+        degraded_error: str,
+        locked: list[str],
+        clock_synchronised: bool = True,
     ) -> ParentView:
         cfg, cal = self.cfg, self.cal
         day = cal.logical_day(now)
@@ -407,6 +415,7 @@ class ViewBuilder:
             locked_accounts=locked,
             degraded=degraded,
             degraded_error=degraded_error,
+            clock_synchronised=clock_synchronised,
             grants=list(cfg.parents.allowance_grants_minutes),
             tv_choices=list(cfg.parents.tv_session_choices_minutes),
             allow_until_stopped=cfg.parents.allow_until_stopped,
@@ -421,6 +430,7 @@ class ViewBuilder:
             override_rows,
             locked,
             degraded,
+            clock_synchronised,
         )
         return view
 

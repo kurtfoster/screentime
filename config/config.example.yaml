@@ -118,6 +118,12 @@ security:
 storage:
   data_dir: /opt/screentime/data    # SQLite database, app secret and VAPID key live here
 
+clock:
+  # The Pi has no battery-backed clock. Until systemd-timesyncd has synchronised (NTP from
+  # pfSense), no device is granted and child starts are refused with CLOCK_NOT_SYNCED.
+  require_sync: true
+  sync_marker: /run/systemd/timesync/synchronized
+
 push:
   vapid_subject: "mailto:parents@example.invalid"   # contact address sent to push services
   allowed_endpoint_hosts:           # push services a browser subscription may point at

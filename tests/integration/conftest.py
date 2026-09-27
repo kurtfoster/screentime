@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.clock import FakeClock
+from app.clock import ClockSync, FakeClock
 from app.config import UserCfg
 from app.context import AppContext, build_context
 from app.firewall.dry_run import DryRunFirewallAdapter
@@ -125,6 +125,7 @@ def open_env(
     *,
     start_hour: int = 10,
     start_minute: int = 0,
+    clock_sync: ClockSync | None = None,
     **overrides: Any,
 ) -> Iterator[AppEnv]:
     overrides.setdefault("notifications", {"browser_push_enabled": True, "warning_minutes": 5})
@@ -137,7 +138,15 @@ def open_env(
     clock = FakeClock(at(start_hour, start_minute))
     firewall = DryRunFirewallAdapter()
     dns, push = FakeDns(), FakePush()
-    ctx = build_context(config, users, adapter=firewall, clock=clock, dns=dns, push_sender=push)  # type: ignore[arg-type]
+    ctx = build_context(
+        config,
+        users,
+        adapter=firewall,
+        clock=clock,
+        dns=dns,  # type: ignore[arg-type]
+        push_sender=push,
+        clock_sync=clock_sync,
+    )
     app = create_app(ctx, run_background=False)
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         yield AppEnv(ctx, client, clock, firewall, dns, push, tmp_path)

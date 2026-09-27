@@ -29,12 +29,14 @@ async def ready(request: Request) -> Response:
     ctx = ctx_of(request)
     db_ok = await run_sync(ctx.db.check)
     firewall_ok = not ctx.enforcement.degraded
-    ok = db_ok and firewall_ok
+    clock_ok = ctx.enforcement.clock_synchronised()
+    ok = db_ok and firewall_ok and clock_ok
     return JSONResponse(
         {
             "status": "ready" if ok else "degraded",
             "database": "ok" if db_ok else "error",
             "firewall": "ok" if firewall_ok else "degraded",
+            "clock": "synchronised" if clock_ok else "not synchronised",
             "version": VERSION,
         },
         status_code=200 if ok else 503,

@@ -107,6 +107,7 @@ BASE_CONFIG: dict[str, Any] = {
         "parent_notifications_enabled": True,
     },
     "security": {"secure_cookies": False, "enforce_file_modes": False},
+    "clock": {"require_sync": False},
 }
 
 

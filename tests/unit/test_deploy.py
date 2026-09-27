@@ -395,6 +395,9 @@ def test_service_unit_matches_the_specification() -> None:
     assert s["Restart"] == ["on-failure"] and s["RestartSec"] == ["3"]
     assert s["NoNewPrivileges"] == ["true"] and s["PrivateTmp"] == ["true"]
     assert "-m app --check-config" in s["ExecStartPre"][0]  # bad config stops startup
+    # No RTC: order after NTP sync, and allow a slow Raspberry Pi 1 start (CHG-06, CHG-08).
+    assert "time-sync.target" in s["After"][0] and "time-sync.target" in s["Wants"][0]
+    assert s["TimeoutStartSec"] == ["300"]
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze not installed")

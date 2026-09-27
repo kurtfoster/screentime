@@ -98,7 +98,16 @@ class Orchestrator:
         participants: tuple[str, ...] = (),
         idempotency_key: str | None = None,
     ) -> CommandResult:
-        gate = await self._degraded_gate(self.cfg.children[child_id].username)
+        actor = self.cfg.children[child_id].username
+        if not self.enforcement.clock_synchronised():
+            # A session started now would be keyed to the wrong logical day and timed wrongly.
+            await run_sync(self._audit_denied, actor, "session_rejected", Reason.CLOCK_NOT_SYNCED)
+            return CommandResult.fail(
+                Reason.CLOCK_NOT_SYNCED,
+                "Screen time can't start yet because the controller is still setting its clock. "
+                "Try again in a few minutes, or ask a parent.",
+            )
+        gate = await self._degraded_gate(actor)
         if gate is not None:
             return gate
         res = await run_sync(

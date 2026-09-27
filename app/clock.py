@@ -8,6 +8,7 @@ timezone via :class:`LogicalCalendar`. The logical day starts at ``logical_day_r
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -40,6 +41,37 @@ class FakeClock:
     def advance(self, **kwargs: float) -> datetime:
         self._now += timedelta(**kwargs)
         return self._now
+
+
+class ClockSync(Protocol):
+    def synchronised(self) -> bool: ...
+
+
+class TimesyncdMarker:
+    """True once systemd-timesyncd has synchronised the clock since boot.
+
+    The Pi has no real-time clock: after a power cut ``fake-hwclock`` restores the last saved
+    time, which is in the past. timesyncd creates the marker file on its first successful
+    synchronisation and keeps it for the rest of the boot, so once seen it is latched.
+    """
+
+    DEFAULT = Path("/run/systemd/timesync/synchronized")
+
+    def __init__(self, marker: Path = DEFAULT) -> None:
+        self._marker = marker
+        self._seen = False
+
+    def synchronised(self) -> bool:
+        if not self._seen:
+            self._seen = self._marker.exists()
+        return self._seen
+
+
+class AssumeSynchronised:
+    """For development machines and tests, where the host clock is trusted."""
+
+    def synchronised(self) -> bool:
+        return True
 
 
 def ensure_utc(value: datetime) -> datetime:

@@ -23,6 +23,8 @@ router = APIRouter()
 async def _build(request: Request) -> ParentView:
     ctx = ctx_of(request)
 
+    clock_synchronised = ctx.enforcement.clock_synchronised()
+
     def build() -> ParentView:
         locked = [name for name, _ in ctx.auth.locked_children()]
         with ctx.db.session() as session:
@@ -32,6 +34,7 @@ async def _build(request: Request) -> ParentView:
                 degraded=ctx.enforcement.degraded,
                 degraded_error=ctx.enforcement.last_error or "",
                 locked=locked,
+                clock_synchronised=clock_synchronised,
             )
 
     return await run_sync(build)

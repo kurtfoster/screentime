@@ -1,8 +1,10 @@
 [Unit]
 Description=Screen-Time Controller
 Documentation=file:///opt/screentime/app/README.md
-After=network-online.target
-Wants=network-online.target
+# time-sync.target: normally start with the clock already set by NTP (there is no RTC).
+# deploy/install.sh bounds that wait to 90 s; the app itself fails closed if it starts first.
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
 
 [Service]
 Type=simple
@@ -19,6 +21,8 @@ ExecStartPre=/opt/screentime/venv/bin/python -m app --check-config
 ExecStart=/opt/screentime/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-server-header --no-access-log
 Restart=on-failure
 RestartSec=3
+# A Raspberry Pi 1 needs about a minute to import the libraries; 90 s (the default) is too tight.
+TimeoutStartSec=300
 
 # Hardening: the service needs its data directory and outbound SSH/DNS, nothing else.
 NoNewPrivileges=true
