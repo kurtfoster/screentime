@@ -501,7 +501,7 @@ def test_diagnostics_page_shows_required_fields(
     page = parent.get("/parent/diagnostics").text
     for needle in (
         "App version",
-        "1.0.0",
+        "1.1.0",
         "Logical day",
         "2026-09-21",
         "Database",
