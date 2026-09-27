@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.auth import hash_password
+from app.passwords import hash_password
 
 PASSWORDS = {"child8": "child8-dev", "child12": "child12-dev", "parents": "parents-dev"}
 

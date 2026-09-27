@@ -430,6 +430,9 @@ def test_nginx_config_is_lan_only_tls_and_proxies_to_localhost() -> None:
     assert "server_name @HOSTNAME@" in conf and "proxy_pass http://127.0.0.1:8080" in conf
     assert "ssl_protocols       TLSv1.2 TLSv1.3" in conf and "return 301 https://" in conf
     assert "limit_req_zone" in conf and "location = /ca.crt" in conf
+    # Every path that verifies a password shares the login rate limit (Argon2 is CPU-bound).
+    assert conf.count("limit_req zone=screentime_login") == 2
+    assert "add-participant|session/start" in conf
     for snippet in re.findall(r"include /etc/nginx/snippets/(\S+);", conf):
         assert (DEPLOY / snippet).exists(), snippet
     lan = (DEPLOY / "screentime-lan-only.conf").read_text()

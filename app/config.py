@@ -29,7 +29,12 @@ from pydantic import (
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
-_ARGON2ID_RE = re.compile(r"^\$argon2id\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$")
+_ARGON2ID_RE = re.compile(
+    r"^\$argon2id\$v=\d+\$m=(\d+),t=(\d+),p=(\d+)\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$"
+)
+# OWASP Password Storage Cheat Sheet minimum for Argon2id (ASVS V2.4 defers to it).
+ARGON2_MIN_MEMORY_KIB = 19456
+ARGON2_MIN_TIME_COST = 2
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _TABLE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
@@ -179,6 +184,23 @@ class NotificationsCfg(_Strict):
     parent_notifications_enabled: bool = True
 
 
+class PasswordHashCfg(_Strict):
+    """Argon2id cost. The default is the OWASP minimum: about 1.4 s per verify on a Pi 1."""
+
+    memory_kib: int = Field(default=ARGON2_MIN_MEMORY_KIB, le=1024 * 1024)
+    time_cost: int = Field(default=ARGON2_MIN_TIME_COST, le=20)
+    parallelism: int = Field(default=1, ge=1, le=16)
+
+    @model_validator(mode="after")
+    def _not_below_owasp_minimum(self) -> PasswordHashCfg:
+        if self.memory_kib < ARGON2_MIN_MEMORY_KIB or self.time_cost < ARGON2_MIN_TIME_COST:
+            raise ValueError(
+                f"password_hash must be at least memory_kib={ARGON2_MIN_MEMORY_KIB} and "
+                f"time_cost={ARGON2_MIN_TIME_COST} (OWASP minimum for Argon2id)"
+            )
+        return self
+
+
 class SecurityCfg(_Strict):
     secure_cookies: bool = True
     session_ttl_minutes: int = Field(default=720, ge=5, le=60 * 24 * 7)
@@ -188,6 +210,7 @@ class SecurityCfg(_Strict):
     grant_actions_per_minute: int = Field(default=20, ge=1, le=600)
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
     enforce_file_modes: bool = True
+    password_hash: PasswordHashCfg = Field(default_factory=PasswordHashCfg)
 
 
 class StorageCfg(_Strict):
@@ -327,6 +350,31 @@ class AppConfig(_Strict):
                 for domain in cfg.domains:
                     hosts.setdefault(domain, service)
         return hosts
+
+
+def argon2_parameters(stored_hash: str) -> tuple[int, int, int] | None:
+    """``(memory_kib, time_cost, parallelism)`` from an Argon2id hash string, without argon2."""
+    match = _ARGON2ID_RE.match(stored_hash)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def hash_cost_problem(cfg: PasswordHashCfg, stored_hash: str) -> str | None:
+    """Why a users.yaml hash should be regenerated with the configured parameters, if it should.
+
+    Hashes carry their own parameters and keep verifying, so this is advice, not an error.
+    """
+    params = argon2_parameters(stored_hash)
+    if params is None:
+        return None
+    memory, time_cost, parallelism = params
+    label = f"m={memory},t={time_cost},p={parallelism}"
+    if memory > cfg.memory_kib or time_cost > cfg.time_cost:
+        return f"uses {label}, above the configured budget, so each login is slower than needed"
+    if memory < cfg.memory_kib or time_cost < cfg.time_cost:
+        return f"uses {label}, below the configured minimum"
+    return None
 
 
 class UserCfg(_Strict):

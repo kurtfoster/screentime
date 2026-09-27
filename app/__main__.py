@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from app.config import ConfigError, load_all
+from app.config import ConfigError, hash_cost_problem, load_all
 from app.main import config_paths_from_env
 from app.version import VERSION
 
@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         if config.firewall.mode == "dry_run":
             print("  warning: firewall.mode is dry_run; nothing is enforced on pfSense")
+        for name, user in users.items():
+            problem = hash_cost_problem(config.security.password_hash, user.password_hash)
+            if problem:
+                print(f"  warning: users.{name}.password_hash {problem}. Regenerate it with:")
+                print(f"    {sys.executable} scripts/make_password_hash.py --config {args.config}")
         return 0
 
     from app.bootstrap import sync_reference_data

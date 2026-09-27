@@ -17,12 +17,12 @@ pytest.importorskip("playwright.sync_api")
 import uvicorn
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
-from app.auth import hash_password
 from app.clock import FakeClock
 from app.config import UserCfg
 from app.context import AppContext, build_context
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.main import create_app
+from app.passwords import hash_password
 from app.timers import Scheduler
 from tests.conftest import at, make_config
 

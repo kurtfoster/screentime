@@ -17,10 +17,6 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from argon2 import PasswordHasher
-
-# InvalidHash exists in argon2-cffi 21.1 (Raspberry Pi OS) and is an alias of InvalidHashError in 23+.
-from argon2.exceptions import InvalidHash, VerificationError
 from sqlalchemy import delete, select
 
 from app.audit import record_audit
@@ -28,12 +24,10 @@ from app.clock import Clock
 from app.config import AppConfig, UserCfg
 from app.db import Database
 from app.models import LoginFailure, WebSession
+from app.passwords import PasswordHashing
 from app.secrets_store import derive_key
 
 COOKIE_NAME = "st_session"
-_hasher = PasswordHasher()
-# Verified against when the username is unknown, so timing does not reveal valid usernames.
-_DUMMY_HASH = _hasher.hash("not-a-real-password")
 
 
 @dataclass(frozen=True)
@@ -55,17 +49,6 @@ class LoginResult:
     principal: Principal | None = None
     message: str = ""
     locked_until: datetime | None = None
-
-
-def hash_password(password: str) -> str:
-    return str(_hasher.hash(password))  # argon2-cffi 21.1 is untyped
-
-
-def verify_password(stored_hash: str, password: str) -> bool:
-    try:
-        return bool(_hasher.verify(stored_hash, password))
-    except (VerificationError, InvalidHash):
-        return False
 
 
 class SlidingWindowLimiter:
@@ -104,6 +87,7 @@ class AuthService:
         self._clock = clock
         self._cookie_key = derive_key(secret, "session-cookie")
         self._login_key = derive_key(secret, "login-csrf")
+        self.passwords = PasswordHashing(config.security.password_hash)
 
     # -- cookie handling --------------------------------------------------------------
 
@@ -222,10 +206,7 @@ class AuthService:
         user = self._users.get(username)
         if self.lockout_for(username, client_ip) is not None:
             return False
-        ok = (
-            verify_password(user.password_hash if user else _DUMMY_HASH, password)
-            and user is not None
-        )
+        ok = self.passwords.verify(user.password_hash if user else None, password)
         if ok:
             self._clear_failures(username, client_ip)
         else:
@@ -244,7 +225,7 @@ class AuthService:
                 False, message="Too many attempts. Ask a parent to unlock you.", locked_until=locked
             )
         user = self._users.get(username)
-        valid = verify_password(user.password_hash if user else _DUMMY_HASH, password)
+        valid = self.passwords.verify(user.password_hash if user else None, password)
         if user is None or not valid:
             locked = self._register_failure(username, client_ip)
             self._audit_login(username, "denied", client_ip, "bad credentials")

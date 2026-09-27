@@ -110,6 +110,10 @@ security:
   grant_actions_per_minute: 20
   trusted_proxies: ["127.0.0.1", "::1"]   # nginx on the same host
   enforce_file_modes: true          # refuse to start if users.yaml is group/world readable
+  password_hash:                    # Argon2id; values below the OWASP minimum are rejected
+    memory_kib: 19456               # 19 MiB: about 1.4 s per login on a Raspberry Pi 1
+    time_cost: 2
+    parallelism: 1                  # one core: more lanes add memory, not speed
 
 storage:
   data_dir: /opt/screentime/data    # SQLite database, app secret and VAPID key live here

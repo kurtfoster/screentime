@@ -12,13 +12,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth import hash_password
 from app.clock import FakeClock
 from app.config import UserCfg
 from app.context import AppContext, build_context
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.firewall.resolver import DnsAnswer, DnsFailure
 from app.main import create_app
+from app.passwords import hash_password
 from tests.conftest import at, make_config
 
 PASSWORDS = {"child8": "pw-child8-x", "child12": "pw-child12-x", "parents": "pw-parents-x"}

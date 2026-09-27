@@ -13,8 +13,8 @@ import pytest
 import yaml
 
 from app.__main__ import main
-from app.auth import hash_password
 from app.config import ConfigError, load_all, load_config, load_users, parse_hhmm
+from app.passwords import hash_password
 from tests.conftest import BASE_CONFIG, make_config
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -273,6 +273,22 @@ def test_check_config_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     )
     assert "Invalid configuration" in capsys.readouterr().err
     assert main(["--version"]) == 0
+
+
+def test_check_config_advises_regenerating_expensive_hashes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tests.conftest import ARGON_HASH  # v1.0 parameters: m=65536, t=3, p=4
+
+    cfg = write(tmp_path, {**BASE_CONFIG})
+    raw = users_raw()
+    raw["users"]["parents"]["password_hash"] = ARGON_HASH
+    users = write(tmp_path, raw, "users.yaml")
+    assert main(["--config", str(cfg), "--users", str(users), "--check-config"]) == 0
+    out = capsys.readouterr().out
+    assert "users.parents.password_hash uses m=65536,t=3,p=4, above the configured budget" in out
+    assert "scripts/make_password_hash.py --config" in out
+    assert "users.child8" not in out
 
 
 def test_init_db_cli_creates_and_seeds_the_database(tmp_path: Path) -> None:
