@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
+
+# InvalidHash exists in argon2-cffi 21.1 (Raspberry Pi OS) and is an alias of InvalidHashError in 23+.
+from argon2.exceptions import InvalidHash, VerificationError
 from sqlalchemy import delete, select
 
 from app.audit import record_audit
@@ -62,7 +64,7 @@ def hash_password(password: str) -> str:
 def verify_password(stored_hash: str, password: str) -> bool:
     try:
         return _hasher.verify(stored_hash, password)
-    except (VerificationError, InvalidHashError):
+    except (VerificationError, InvalidHash):
         return False
 
 

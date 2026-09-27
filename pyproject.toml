@@ -9,17 +9,23 @@ description = "Household screen-time controller driving pfSense runtime firewall
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    # Floors are the Raspberry Pi OS Trixie (Debian 13) package versions, which is what the
+    # Pi runs (deploy/apt-packages.txt). Do not raise a floor to fix a test: fix the code.
     "fastapi>=0.115",
-    "uvicorn>=0.30",
+    "starlette>=0.46",
+    "pydantic>=2.10",
+    "uvicorn>=0.32",
     "jinja2>=3.1",
-    "python-multipart>=0.0.9",
-    "sqlalchemy>=2.0",
+    "python-multipart>=0.0.20",
+    "sqlalchemy>=2.0.40",
     "alembic>=1.13",
-    "argon2-cffi>=23.1",
+    "argon2-cffi>=21.1",
     "pyyaml>=6.0",
-    "dnspython>=2.6",
+    "dnspython>=2.7",
     "pywebpush>=2.0",
-    "cryptography>=42",
+    "cryptography>=43",
+    "py-vapid>=1.9",
+    "http-ece>=1.2",
 ]
 
 [project.optional-dependencies]

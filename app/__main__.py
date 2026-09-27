@@ -22,12 +22,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--init-db", action="store_true", help="create/upgrade the database and exit"
     )
+    parser.add_argument(
+        "--check-deps",
+        action="store_true",
+        help="print installed library versions and fail if any is below the pyproject floor",
+    )
     parser.add_argument("--version", action="store_true", help="print the version and exit")
     args = parser.parse_args(argv)
 
     if args.version:
         print(VERSION)
         return 0
+    if args.check_deps:
+        return check_deps()
     if not (args.check_config or args.init_db):
         parser.print_help()
         return 0
@@ -65,6 +72,26 @@ def main(argv: list[str] | None = None) -> int:
     with db.session(write=True) as session:
         sync_reference_data(session, config, users)
     print(f"Database ready at {config.storage.db_file}")
+    return 0
+
+
+def check_deps() -> int:
+    from app.runtime_deps import check_dependencies
+
+    statuses = check_dependencies()
+    print(f"Python {sys.version.split()[0]}")
+    for status in statuses:
+        mark = "ok" if status.ok else "FAIL"
+        print(f"  {mark:4}  {status.name:18} {status.installed or '-':12} (minimum {status.floor})")
+    failed = [s for s in statuses if not s.ok]
+    if failed:
+        print(
+            f"{len(failed)} dependency problem(s): "
+            + "; ".join(f"{s.name}: {s.problem}" for s in failed),
+            file=sys.stderr,
+        )
+        return 1
+    print("All dependencies meet the minimum versions.")
     return 0
 
 

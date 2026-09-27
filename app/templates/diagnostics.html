@@ -75,6 +75,22 @@
   </section>
 
   <section class="card stack">
+    <h2>Runtime libraries</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Library</th><th>Installed</th><th>Minimum</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for d in dependencies %}
+          <tr><td class="mono">{{ d.name }}</td><td class="mono">{{ d.installed or "missing" }}</td><td class="mono">{{ d.floor }}</td><td>{% if d.ok %}&#10003; ok{% else %}&#9888; {{ d.problem }}{% endif %}</td></tr>
+        {% else %}
+          <tr><td colspan="4" class="muted">Dependency list unavailable (pyproject.toml not found).</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card stack">
     <h2>Recent audit events</h2>
     <div class="scroll">
       <table>

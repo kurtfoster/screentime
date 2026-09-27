@@ -511,5 +511,7 @@ def test_diagnostics_page_shows_required_fields(
         "Last refresh",
         "Unresolved hostnames",
         "www.duolingo.com",
+        "Runtime libraries",
+        "argon2-cffi",
     ):
         assert needle in page, needle

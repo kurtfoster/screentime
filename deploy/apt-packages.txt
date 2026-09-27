@@ -1,0 +1,23 @@
+# Runtime packages for Raspberry Pi OS Trixie (armhf, ARMv6-safe). Single source of truth for
+# deploy/install.sh (--deps apt) and deploy/Containerfile.trixie. One package per line.
+python3
+python3-venv
+python3-fastapi
+python3-starlette
+python3-pydantic
+python3-pydantic-core
+python3-sqlalchemy
+python3-alembic
+python3-argon2
+python3-cryptography
+python3-py-vapid
+python3-http-ece
+python3-dnspython
+python3-uvicorn
+python3-python-multipart
+python3-jinja2
+python3-yaml
+sqlite3
+nginx
+openssh-client
+openssl

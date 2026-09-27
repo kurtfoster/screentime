@@ -13,6 +13,7 @@ from app.db import current_revision
 from app.deps import ctx_of, parent_page, render
 from app.models import AuditEvent, FirewallEvent
 from app.runtime import run_sync
+from app.runtime_deps import dependency_report
 from app.version import VERSION
 from app.views import ParentView
 
@@ -76,6 +77,7 @@ async def diagnostics(request: Request, principal: Principal = Depends(parent_pa
             "revision": current_revision(ctx.db),
             "fw_events": fw_events,
             "audit": audit,
+            "dependencies": dependency_report(),
         }
 
     data = await run_sync(load)
