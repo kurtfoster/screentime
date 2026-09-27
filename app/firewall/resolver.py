@@ -159,12 +159,27 @@ class EducationResolver:
             merged |= status.ips
         return merged
 
+    def _push_is_current(self, merged: set[str]) -> bool:
+        """True when pf already holds exactly ``merged`` from a recent, successful push.
+
+        Each push is an SSH call, so an unchanged set is not re-sent every refresh. It is still
+        re-sent once the last push is older than education_dns_refresh_seconds, which heals a
+        pf filter reload that emptied the table.
+        """
+        if not self._pushed_once or not self.last_push_ok or self.last_push_at is None:
+            return False
+        age = (self._clock.now() - self.last_push_at).total_seconds()
+        return merged == self.pushed and age < self._cfg.firewall.education_dns_refresh_seconds
+
     async def refresh(self) -> set[str]:
-        """Resolve every host, then replace the pf table atomically. Returns the pushed set."""
+        """Resolve every host, then replace the pf table if needed. Returns the table's set."""
         sem = asyncio.Semaphore(8)
         await asyncio.gather(*(self._resolve_one(s, sem) for s in self.hosts.values()))
         self.last_refresh_at = self._clock.now()
         merged = self.union()
+        if self._push_is_current(merged):
+            log.debug("education table unchanged (%d addresses); not pushed", len(merged))
+            return merged
         if self.hosts and not merged:
             # Nothing has ever resolved: keep whatever pf already holds rather than emptying it.
             self.last_push_ok = False

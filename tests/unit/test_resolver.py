@@ -270,3 +270,58 @@ def test_resolver_end_to_end_with_real_dns_and_lkg(tmp_path) -> None:  # type: i
     first, second, status = asyncio.run(_with_dns(scenario))
     assert first == second == {"203.0.113.10", "203.0.113.11", "2001:db8::10"}
     assert status == "stale"
+
+
+def edu_pushes(fw: DryRunFirewallAdapter) -> int:
+    return sum(1 for call in fw.calls if call[0] == "replace_education_ips")
+
+
+@pytest.mark.anyio
+async def test_an_unchanged_set_is_not_pushed_again(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    resolver, dns, fw, clock = build(tmp_path)
+    dns.answers = hosts()
+    first = await resolver.refresh()
+    clock.advance(seconds=60)
+    assert await resolver.refresh() == first  # still reports what the table holds
+    assert edu_pushes(fw) == 1
+    assert dns.calls == 6  # DNS is still refreshed on the usual cadence
+
+
+@pytest.mark.anyio
+async def test_a_changed_set_is_pushed_at_once(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    resolver, dns, fw, clock = build(tmp_path)
+    dns.answers = hosts()
+    await resolver.refresh()
+    dns.answers["www.khanacademy.org"] = DnsAnswer(frozenset({"151.101.9.9"}), (), 3600)
+    clock.advance(seconds=60)
+    await resolver.refresh()
+    assert edu_pushes(fw) == 2 and "151.101.9.9" in fw.education
+
+
+@pytest.mark.anyio
+async def test_a_stale_push_is_repeated_to_heal_a_filter_reload(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    resolver, dns, fw, clock = build(tmp_path)
+    dns.answers = hosts()
+    await resolver.refresh()
+    fw.wipe()  # pfSense reloaded its filter and emptied the runtime table
+    clock.advance(seconds=299)
+    await resolver.refresh()
+    assert edu_pushes(fw) == 1 and fw.education == set()
+    clock.advance(seconds=1)  # education_dns_refresh_seconds (300) since the last push
+    await resolver.refresh()
+    assert edu_pushes(fw) == 2 and "104.18.1.1" in fw.education
+
+
+@pytest.mark.anyio
+async def test_a_failed_push_is_retried_on_the_next_refresh(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    resolver, dns, fw, clock = build(tmp_path)
+    dns.answers = hosts()
+    await resolver.refresh()
+    dns.answers["www.khanacademy.org"] = DnsAnswer(frozenset({"151.101.9.9"}), (), 3600)
+    fw.fail_ops = {"replace_education_ips"}
+    await resolver.refresh()
+    assert resolver.last_push_ok is False
+    fw.fail_ops = set()
+    clock.advance(seconds=60)
+    await resolver.refresh()
+    assert resolver.last_push_ok and "151.101.9.9" in fw.education
