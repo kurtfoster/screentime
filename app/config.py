@@ -157,6 +157,9 @@ class FirewallCfg(_Strict):
     ssh_timeout_seconds: int = Field(default=10, ge=1, le=120)
     command: str = "/usr/local/sbin/screenctl"
     use_sudo: bool = True
+    # Reuse one SSH connection for every wrapper call (ControlMaster). A new key exchange per
+    # call costs about a second on a Raspberry Pi 1. Switch off if pfSense's sshd objects.
+    ssh_multiplex: bool = True
     active_table: str = "SCR_ACTIVE"
     education_table: str = "SCR_EDU_ALLOW"
     reconcile_seconds: int = Field(default=30, ge=5, le=3600)

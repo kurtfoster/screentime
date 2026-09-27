@@ -97,7 +97,9 @@ def build_context(
 
     if adapter is None:
         adapter = (
-            PfSenseSshFirewallAdapter(config.firewall)
+            PfSenseSshFirewallAdapter(
+                config.firewall, control_dir=config.storage.data_dir / "ssh-mux"
+            )
             if config.firewall.mode == "pfsense_ssh"
             else DryRunFirewallAdapter()
         )

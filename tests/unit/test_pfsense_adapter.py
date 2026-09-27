@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Iterator, Sequence
+from pathlib import Path
 
 import pytest
 
@@ -191,3 +194,133 @@ async def test_subprocess_runner_kills_on_timeout() -> None:
 async def test_subprocess_runner_reports_missing_binary() -> None:
     with pytest.raises(FirewallError, match="cannot execute"):
         await subprocess_runner(["/nonexistent/ssh"], None, 5)
+
+
+# --- connection multiplexing (CHG-03) --------------------------------------------------------
+
+
+@pytest.fixture
+def short_dir() -> Iterator[Path]:
+    """Control sockets must fit the Unix socket path limit; pytest's tmp_path names do not."""
+    base = Path(tempfile.mkdtemp(prefix="stm", dir="/tmp"))
+    yield base
+    shutil.rmtree(base, ignore_errors=True)
+
+
+def muxed(base, runner: FakeRunner, **cfg: object) -> PfSenseSshFirewallAdapter:  # type: ignore[no-untyped-def]
+    return PfSenseSshFirewallAdapter(
+        FirewallCfg(mode="pfsense_ssh", **cfg),  # type: ignore[arg-type]
+        runner,
+        control_dir=base / "data" / "ssh-mux",
+    )
+
+
+@pytest.mark.anyio
+async def test_calls_share_one_connection_through_a_private_control_socket(short_dir) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeRunner()
+    await muxed(short_dir, runner).add_active_ip("192.168.12.30")
+    joined = " ".join(runner.calls[0][0])
+    control = short_dir / "data" / "ssh-mux"
+    assert "ControlMaster=auto" in joined and "ControlPersist=10m" in joined
+    assert f"ControlPath={control}/%C" in joined and "ServerAliveInterval=10" in joined
+    assert control.is_dir() and control.stat().st_mode & 0o777 == 0o700
+    assert runner.remote() == "sudo /usr/local/sbin/screenctl add-active 192.168.12.30"
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_multiplexing_can_be_switched_off(short_dir) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeRunner()
+    await muxed(short_dir, runner, ssh_multiplex=False).add_active_ip("192.168.12.30")
+    assert "Control" not in " ".join(runner.calls[0][0])
+    assert not (short_dir / "data" / "ssh-mux").exists()
+
+
+@pytest.mark.anyio
+async def test_a_stale_master_is_bypassed_once_before_failing(short_dir) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeRunner()
+    runner.responses = [
+        CommandResult(255, "", "mux_client_request_session: read from master failed"),
+        CommandResult(0, "192.168.12.30\n", ""),
+    ]
+    assert await muxed(short_dir, runner).get_active_ips() == {"192.168.12.30"}
+    first, second = (" ".join(c[0]) for c in runner.calls)
+    assert "ControlMaster=auto" in first
+    assert "ControlMaster=no" in second and "ControlPath=none" in second
+
+
+@pytest.mark.anyio
+async def test_only_one_retry_and_only_for_transport_errors(short_dir) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeRunner()
+    runner.responses = [CommandResult(255, "", "a"), CommandResult(255, "", "Connection refused")]
+    with pytest.raises(FirewallError, match="exit 255"):
+        await muxed(short_dir, runner).add_active_ip("192.168.12.30")
+    assert len(runner.calls) == 2
+
+    wrapper_refusal = FakeRunner()
+    wrapper_refusal.responses = [CommandResult(64, "", "screenctl: refused")]
+    with pytest.raises(FirewallError, match="exit 64"):
+        await muxed(short_dir, wrapper_refusal).add_active_ip("192.168.12.30")
+    assert len(wrapper_refusal.calls) == 1  # the wrapper answered: nothing to retry
+
+
+@pytest.mark.anyio
+async def test_a_hung_master_is_retried_without_it(short_dir) -> None:  # type: ignore[no-untyped-def]
+    calls: list[list[str]] = []
+
+    async def runner(argv, stdin, timeout):  # type: ignore[no-untyped-def]
+        calls.append(list(argv))
+        if len(calls) == 1:
+            raise FirewallError("ssh timed out after 15s")
+        return CommandResult(0, "ok\n", "")
+
+    adapter = PfSenseSshFirewallAdapter(
+        FirewallCfg(mode="pfsense_ssh"), runner, control_dir=short_dir / "mux"
+    )
+    assert (await adapter.health()).ok
+    assert "ControlMaster=no" in " ".join(calls[1])
+
+
+@pytest.mark.anyio
+async def test_timeouts_without_multiplexing_are_not_retried(runner: FakeRunner) -> None:
+    calls = 0
+
+    async def failing(argv, stdin, timeout):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        raise FirewallError("ssh timed out after 15s")
+
+    adapter = PfSenseSshFirewallAdapter(FirewallCfg(mode="pfsense_ssh"), failing)
+    with pytest.raises(FirewallError):
+        await adapter.kill_states("192.168.12.30")
+    assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_education_payload_is_resent_on_the_retry(short_dir) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeRunner()
+    runner.responses = [CommandResult(255, "", "x"), CommandResult(0, "", "")]
+    await muxed(short_dir, runner).replace_education_ips({"1.1.1.1"})
+    assert [c[1] for c in runner.calls] == [b"1.1.1.1\n", b"1.1.1.1\n"]
+
+
+def test_a_control_path_too_long_for_a_socket_disables_multiplexing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    runner = FakeRunner()
+    long_dir = tmp_path / ("x" * 60) / "ssh-mux"
+    with caplog.at_level("WARNING", logger="screentime.firewall"):
+        adapter = PfSenseSshFirewallAdapter(
+            FirewallCfg(mode="pfsense_ssh"), runner, control_dir=long_dir
+        )
+    assert "Control" not in " ".join(adapter.build_argv("health"))
+    assert any("multiplexing disabled" in r.message for r in caplog.records)
+
+
+def test_the_production_control_path_fits() -> None:
+    adapter = PfSenseSshFirewallAdapter(
+        FirewallCfg(mode="pfsense_ssh"),
+        FakeRunner(),
+        control_dir=Path("/opt/screentime/data/ssh-mux"),
+    )
+    assert adapter._control_dir is not None

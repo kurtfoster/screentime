@@ -58,17 +58,42 @@ async def subprocess_runner(
     )
 
 
+SSH_TRANSPORT_ERROR = 255  # ssh's own failure code, as opposed to the remote command's
+# ssh expands %C to 40 hex characters and binds "<path>.<16 random>" first; the whole name
+# must fit a Unix socket address (108 bytes on Linux, 104 on the BSDs).
+_MAX_CONTROL_DIR_LENGTH = 104 - 1 - len("/") - 40 - 17
+
+
 class PfSenseSshFirewallAdapter:
-    def __init__(self, cfg: FirewallCfg, runner: Runner | None = None) -> None:
+    def __init__(
+        self, cfg: FirewallCfg, runner: Runner | None = None, control_dir: Path | None = None
+    ) -> None:
         self._cfg = cfg
         self._runner: Runner = runner or subprocess_runner
+        self._control_dir = control_dir if cfg.ssh_multiplex else None
+        if self._control_dir is not None and len(str(self._control_dir)) > _MAX_CONTROL_DIR_LENGTH:
+            log.warning(
+                "ssh multiplexing disabled: control socket directory %s is longer than %d "
+                "characters (Unix socket path limit); use a shorter storage.data_dir",
+                self._control_dir,
+                _MAX_CONTROL_DIR_LENGTH,
+            )
+            self._control_dir = None
+
+    def _control_path(self) -> str:
+        """Socket directory, 0700 and owned by the service user: the socket grants the same
+        pfSense access as the private key, so it gets the same protection."""
+        assert self._control_dir is not None
+        self._control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._control_dir.chmod(0o700)
+        return str(self._control_dir / "%C")
 
     def _known_hosts(self) -> str:
         if self._cfg.ssh_known_hosts_path:
             return self._cfg.ssh_known_hosts_path
         return str(Path(self._cfg.ssh_key_path).parent / "known_hosts")
 
-    def build_argv(self, op: str, arg: str | None = None) -> list[str]:
+    def build_argv(self, op: str, arg: str | None = None, *, multiplex: bool = True) -> list[str]:
         if op not in _OPS:
             raise FirewallError(f"operation {op!r} is not permitted")
         remote = [self._cfg.command, op]
@@ -86,14 +111,39 @@ class PfSenseSshFirewallAdapter:
             "-o", "StrictHostKeyChecking=accept-new",
             "-o", f"UserKnownHostsFile={self._known_hosts()}",
             "-o", "LogLevel=ERROR",
+            *self._mux_options(multiplex),
             f"{self._cfg.ssh_user}@{self._cfg.host}",
             " ".join(remote),
         ]  # fmt: skip
 
+    def _mux_options(self, multiplex: bool) -> list[str]:
+        if self._control_dir is None:
+            return []
+        if not multiplex:
+            return ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
+        return [
+            "-o", "ControlMaster=auto",
+            "-o", "ControlPersist=10m",
+            "-o", f"ControlPath={self._control_path()}",
+            # A master whose TCP connection died (pfSense rebooted) exits within 30 s.
+            "-o", "ServerAliveInterval=10",
+            "-o", "ServerAliveCountMax=3",
+        ]  # fmt: skip
+
     async def _run(self, op: str, arg: str | None = None, stdin: bytes | None = None) -> str:
-        argv = self.build_argv(op, arg)
         timeout = float(self._cfg.ssh_timeout_seconds) + 5.0
-        result = await self._runner(argv, stdin, timeout)
+        try:
+            result = await self._runner(self.build_argv(op, arg), stdin, timeout)
+            retry = self._control_dir is not None and result.returncode == SSH_TRANSPORT_ERROR
+        except FirewallError:
+            if self._control_dir is None:
+                raise
+            retry = True
+        if retry:
+            # A stale or hung master socket must not flip the service into degraded mode:
+            # try once more on a fresh, unshared connection before reporting failure.
+            log.warning("ssh multiplexed call failed for %s; retrying without the master", op)
+            result = await self._runner(self.build_argv(op, arg, multiplex=False), stdin, timeout)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise FirewallError(
