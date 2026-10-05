@@ -12,7 +12,6 @@ from app.resources import (
     ResourceSnapshot,
     available_memory_mb,
     load_status_file,
-    percentile_95,
     process_memory_mb,
     read_backup_status,
     throttle_flags,
@@ -53,13 +52,6 @@ def test_throttle_flags_fall_back_to_vcgencmd_or_report_unavailable(tmp_path: Pa
     assert throttle_flags(missing, run=lambda argv: "garbage") is None
 
 
-def test_percentile_uses_nearest_rank() -> None:
-    assert percentile_95([]) is None
-    assert percentile_95([7]) == 7
-    assert percentile_95(range(1, 101)) == 95
-    assert percentile_95([10] * 19 + [900]) == 10
-
-
 def test_lag_tracker_keeps_one_hour() -> None:
     tracker = LagTracker(window_seconds=3600)
     assert tracker.max_lag() is None
@@ -86,8 +78,7 @@ def snapshot(**changes: object) -> ResourceSnapshot:
         "available_mb": 290,
         "load": (0.31, 0.25, 0.2),
         "tick_lag_max_seconds": 0.4,
-        "ssh_p95_ms": 120,
-        "ssh_operations": 40,
+        "pfsense_fetch_age_seconds": 42,
         "argon2_verify_seconds": 1.41,
         "clock_synchronised": True,
         "throttling": [],
@@ -101,7 +92,8 @@ def test_snapshot_rows_are_readable() -> None:
     rows = dict(snapshot().lines())
     assert rows["App memory (RSS / peak)"] == "72 MB / 95 MB"
     assert rows["Timer tick lag (max, last hour)"] == "0.4 s"
-    assert rows["pfSense SSH p95 (last hour)"] == "120 ms over 40 operations"
+    assert rows["pfSense last fetch"] == "42 s ago"
+    assert dict(snapshot(pfsense_fetch_age_seconds=None).lines())["pfSense last fetch"] == "n/a"
     assert rows["Last password check"] == "1.41 s"
     assert rows["Under-voltage / throttling"] == "none"
     low = dict(

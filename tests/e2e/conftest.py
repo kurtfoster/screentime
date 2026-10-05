@@ -72,11 +72,10 @@ def live_app(tmp_path: Path, hashes: dict[str, str]) -> Iterator[LiveApp]:
     )
     clock = FakeClock(at(10, 0))
     firewall = DryRunFirewallAdapter()
-    ctx = build_context(config, adapter=firewall, clock=clock, dns=_NoDns())  # type: ignore[arg-type]
+    ctx = build_context(config, adapter=firewall, clock=clock)
     seed_accounts(ctx.db, config, hashes)
     ctx.scheduler = Scheduler(
         ctx.orchestrator,
-        ctx.resolver,
         config,
         ctx.maintenance,
         tick_seconds=0.2,
@@ -99,11 +98,6 @@ def live_app(tmp_path: Path, hashes: dict[str, str]) -> Iterator[LiveApp]:
     finally:
         server.should_exit = True
         thread.join(timeout=10)
-
-
-class _NoDns:
-    async def resolve(self, host: str) -> Any:
-        raise RuntimeError("no DNS in browser tests")
 
 
 def open_page(

@@ -58,7 +58,7 @@ place() {  # source target mode
 }
 place "$SRC/data/screentime.db" "$DATA_DIR/screentime.db" 0600
 rm -f "$DATA_DIR/screentime.db-wal" "$DATA_DIR/screentime.db-shm"
-for f in secret.key vapid_private.pem; do
+for f in secret.key vapid_private.pem firewall-token.sha256; do
     [ -e "$SRC/data/$f" ] && place "$SRC/data/$f" "$DATA_DIR/$f" 0600
 done
 [ -e "$SRC/config/config.yaml" ] && place "$SRC/config/config.yaml" "$CONFIG_DIR/config.yaml" 0640
@@ -70,12 +70,13 @@ echo "restore: files restored into $PREFIX"
 
 if [ "$MANAGE_SERVICE" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
     if [ "$SERVICE_WAS_ACTIVE" -eq 1 ] || [ -e /etc/systemd/system/screentime.service ]; then
-        systemctl start screentime.service && echo "restore: service started; pfSense tables will be rebuilt from the database"
+        systemctl start screentime.service && echo "restore: service started; pfSense picks up the desired state at its next poll"
     fi
 fi
 cat <<EOF
 restore: next steps
-  * The SSH key is not part of a backup. If this is a new Pi, create one and authorise it on
-    pfSense (OPERATIONS.md, "pfSense setup").
+  * pfSense keeps using its token (its hash was restored). If this is a new Pi with a new CA,
+    copy /etc/screentime/tls/ca.crt to pfSense again (OPERATIONS.md 2.4).
   * Check status:  $PREFIX/venv/bin/python $PREFIX/app/scripts/admin_cli.py status
+  * Check pfSense: $PREFIX/venv/bin/python $PREFIX/app/scripts/admin_cli.py firewall-check
 EOF

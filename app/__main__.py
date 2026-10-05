@@ -72,12 +72,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  devices:       {', '.join(config.devices)}")
         print(f"  firewall mode: {config.firewall.mode}")
         print("  logins:        in the database (scripts/admin_cli.py user list)")
-        hosts = config.education_hosts()
-        print(f"  allowlist:     {len(hosts)} hostnames")
-        if not hosts:
-            print(
-                "  warning: always_allowed has no domains; education apps will be blocked when idle"
-            )
         if config.firewall.mode == "dry_run":
             print("  warning: firewall.mode is dry_run; nothing is enforced on pfSense")
         return 0

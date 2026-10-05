@@ -35,7 +35,8 @@ def test_floors_are_the_raspberry_pi_os_trixie_versions() -> None:
     assert floors["argon2-cffi"] == "21.1"
     assert floors["fastapi"] == "0.115" and floors["starlette"] == "0.46"
     assert floors["pydantic"] == "2.10" and floors["cryptography"] == "43"
-    assert {"py-vapid", "http-ece", "dnspython", "uvicorn", "python-multipart"} <= set(floors)
+    assert {"py-vapid", "http-ece", "uvicorn", "python-multipart"} <= set(floors)
+    assert "dnspython" not in floors  # the controller no longer resolves hostnames
 
 
 def test_missing_and_old_packages_are_reported(tmp_path: Path) -> None:

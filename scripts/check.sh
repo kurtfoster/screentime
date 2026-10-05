@@ -65,7 +65,6 @@ step "mypy (strict)"
 "$PY" -m mypy
 step "shell syntax"
 for f in deploy/*.sh scripts/*.sh; do bash -n "$f"; done
-sh -n deploy/pfsense-screenctl.sh
 sh -n deploy/pfsense-screentime-pull.sh
 
 MARK=()

@@ -34,13 +34,11 @@ devices:
     ip: "192.168.12.30"             # must be a static DHCP mapping on pfSense
     type: personal
     owner: child8
-    education_allowlist: true
   iphone_child12:
     display_name: "iPhone"
     ip: "192.168.12.31"
     type: personal
     owner: child12
-    education_allowlist: true
   kids_tv:
     display_name: "Kids TV"
     ip: "192.168.12.40"
@@ -66,35 +64,18 @@ parents:
   grants_override_all_child_restrictions: true
   until_stopped_end_at_logical_day_reset: true
 
-# Education allowlist: hostnames only (no wildcards). The resolver turns these into the
-# SCR_EDU_ALLOW table. The starters below are best guesses; the parent diagnostics page
-# shows what resolves. Add hostnames as you discover what each app needs.
-always_allowed:
-  sora_school:
-    enabled: true
-    domains: []                     # e.g. your school's Sora library hostname
-  duolingo:
-    enabled: true
-    domains: ["duolingo.com", "www.duolingo.com"]
-  reading_eggs:
-    enabled: true
-    domains: ["readingeggs.com", "www.readingeggs.com"]
-  khan_academy:
-    enabled: true
-    domains: ["khanacademy.org", "www.khanacademy.org", "cdn.kastatic.org"]
+# The education allowlist is not configured here: it is the pfSense Host alias SCR_EDU_ALLOW
+# (hostnames, resolved by pfSense), and which devices may use it is the alias SCR_EDU_DEVICES.
+# See OPERATIONS.md section 2.
 
 firewall:
-  mode: dry_run                     # dry_run | pfsense_ssh   (switch once pfSense is ready)
-  host: "192.168.12.1"
-  ssh_user: "screentime"
-  ssh_key_path: "/opt/screentime/.ssh/id_ed25519"
-  command: "/usr/local/sbin/screenctl"
-  use_sudo: true                    # the wrapper needs root for pfctl
-  active_table: "SCR_ACTIVE"
-  education_table: "SCR_EDU_ALLOW"
-  reconcile_seconds: 30
-  education_dns_refresh_seconds: 300
-  include_ipv6_in_education: true
+  mode: dry_run                     # dry_run | pfsense_pull   (switch at Gate B, OPERATIONS.md 2)
+  host: "192.168.12.1"              # pfSense: the only address that may fetch /firewall/v1/*
+  reconcile_seconds: 30             # how often the desired state is recomputed
+  max_lease_seconds: 900            # longest lease pfSense is given (renewed every poll)
+  ack_timeout_seconds: 150          # a start pfSense never confirms is ended and refunded
+  degraded_after_seconds: 180       # "pfSense is not checking in": parents warned, starts refused
+  stale_grace_seconds: 600          # must equal STALE_GRACE on pfSense (firewall-check compares)
 
 notifications:
   browser_push_enabled: true

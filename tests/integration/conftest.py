@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 from app.clock import ClockSync, FakeClock
 from app.context import AppContext, build_context
 from app.firewall.dry_run import DryRunFirewallAdapter
-from app.firewall.resolver import DnsAnswer, DnsFailure
 from app.main import create_app
 from app.passwords import hash_password
 from tests.conftest import at, make_config, seed_accounts
@@ -32,19 +31,6 @@ IPAD, IPHONE, KIDS_TV, LOUNGE_TV = (
 @pytest.fixture(scope="session")
 def user_hashes() -> dict[str, str]:
     return {name: hash_password(pw) for name, pw in PASSWORDS.items()}
-
-
-class FakeDns:
-    """Scriptable DNS: host -> DnsAnswer or an exception to raise."""
-
-    def __init__(self) -> None:
-        self.answers: dict[str, DnsAnswer | Exception] = {}
-
-    async def resolve(self, host: str) -> DnsAnswer:
-        result = self.answers.get(host, DnsFailure("NXDOMAIN"))
-        if isinstance(result, Exception):
-            raise result
-        return result
 
 
 class FakePush:
@@ -64,7 +50,6 @@ class AppEnv:
     client: TestClient
     clock: FakeClock
     firewall: Any  # the DryRunFirewallAdapter, or the real adapter in pfsense_pull mode
-    dns: FakeDns
     push: FakePush
     tmp_path: Path
 
@@ -131,19 +116,18 @@ def open_env(
     config = make_config(tmp_path, **overrides)
     clock = FakeClock(at(start_hour, start_minute))
     firewall = DryRunFirewallAdapter() if config.firewall.mode == "dry_run" else None
-    dns, push = FakeDns(), FakePush()
+    push = FakePush()
     ctx = build_context(
         config,
         adapter=firewall,
         clock=clock,
-        dns=dns,  # type: ignore[arg-type]
         push_sender=push,
         clock_sync=clock_sync,
     )
     seed_accounts(ctx.db, config, hashes)
     app = create_app(ctx, run_background=False)
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
-        yield AppEnv(ctx, client, clock, firewall or ctx.firewall.inner, dns, push, tmp_path)
+        yield AppEnv(ctx, client, clock, firewall or ctx.firewall.inner, push, tmp_path)
 
 
 @pytest.fixture

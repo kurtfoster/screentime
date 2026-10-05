@@ -1,7 +1,8 @@
 """In-process asyncio scheduler (spec section 17). No Redis, no Celery.
 
 Independent loops: the timer tick (expiry, warnings, cutoffs), firewall publication
-(leases are renewed and health is re-checked), and the education DNS refresh. A failure in one iteration is logged and never stops the loop.
+(leases are renewed and health is re-checked), housekeeping, resource samples and, in
+pull mode, the heartbeat and firewall alerts. A failure in one iteration is logged and never stops the loop.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from app.config import AppConfig
-from app.firewall.resolver import EducationResolver
 from app.orchestrator import Orchestrator
 from app.resources import TICK_LAG_WARN_SECONDS, LagTracker
 from app.runtime import run_sync
@@ -29,7 +29,6 @@ class Scheduler:
     def __init__(
         self,
         orchestrator: Orchestrator,
-        resolver: EducationResolver,
         config: AppConfig,
         maintenance: Callable[[], None] | None = None,
         *,
@@ -46,7 +45,6 @@ class Scheduler:
         self._tick_seconds = tick_seconds
         self._reconcile_seconds = reconcile_seconds
         self._orch = orchestrator
-        self._resolver = resolver
         self._cfg = config
         self._maintenance = maintenance
         self._tasks: list[asyncio.Task[None]] = []
@@ -110,7 +108,6 @@ class Scheduler:
                 self._publish,
                 lambda: self._reconcile_seconds or float(fw.reconcile_seconds),
             ),
-            ("education", self._resolver.refresh, self._resolver.next_interval_seconds),
             ("housekeeping", self._housekeeping, lambda: MAINTENANCE_SECONDS),
             ("resources", self._resources, lambda: RESOURCE_SAMPLE_SECONDS),
         ]

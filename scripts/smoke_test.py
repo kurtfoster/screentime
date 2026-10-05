@@ -36,7 +36,6 @@ MODULES = [
     "cryptography.hazmat.primitives.asymmetric.ec",
     "py_vapid",
     "http_ece",
-    "dns.asyncresolver",
     "python_multipart",
     "starlette",
     "fastapi",

@@ -35,7 +35,6 @@ ARGON2_MIN_TIME_COST = 2
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Login names, for children (config.yaml) and parents (database) alike.
 USERNAME_PATTERN = r"^[a-z][a-z0-9_.-]{0,31}$"
-_TABLE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
 
 DEFAULT_CONFIG = "/opt/screentime/config/config.yaml"
@@ -93,7 +92,6 @@ class DeviceCfg(_Strict):
     ip: str
     type: Literal["personal", "shared_tv"]
     owner: str | None = None
-    education_allowlist: bool = False
     weekday_cutoff: HHMM | None = None
     enabled: bool = True
 
@@ -135,43 +133,29 @@ class ParentsCfg(_Strict):
     until_stopped_end_at_logical_day_reset: bool = True
 
 
-class ServiceCfg(_Strict):
-    enabled: bool = True
-    domains: list[str] = Field(default_factory=list)
-
-    @field_validator("domains")
-    @classmethod
-    def _valid_hostnames(cls, value: list[str]) -> list[str]:
-        cleaned: list[str] = []
-        for raw in value:
-            host = raw.strip().lower().rstrip(".")
-            if "*" in host:
-                raise ValueError(
-                    f"{raw!r}: wildcards are not supported; list each hostname or subdomain explicitly"
-                )
-            if not _HOSTNAME_RE.match(host):
-                raise ValueError(f"{raw!r} is not a valid hostname")
-            cleaned.append(host)
-        return cleaned
+# Settings that v1.2 removed, with where they went. A clear message beats "extra inputs".
+_MOVED_FIREWALL_KEYS = {
+    "ssh_port": "pfSense now pulls from this controller; there is no SSH (plan 6)",
+    "ssh_user": "pfSense now pulls from this controller; there is no SSH (plan 6)",
+    "ssh_key_path": "pfSense now pulls from this controller; there is no SSH (plan 6)",
+    "ssh_known_hosts_path": "pfSense now pulls from this controller; there is no SSH (plan 6)",
+    "ssh_timeout_seconds": "pfSense now pulls from this controller; there is no SSH (plan 6)",
+    "ssh_multiplex": "pfSense now pulls from this controller; there is no SSH (plan 6)",
+    "command": "screenctl is gone; pfSense runs screentime-pull (OPERATIONS.md 2)",
+    "use_sudo": "screenctl is gone; pfSense runs screentime-pull (OPERATIONS.md 2)",
+    "active_table": "table names live in pfSense's screentime-pull.conf",
+    "education_table": "the education allowlist is the pfSense alias SCR_EDU_ALLOW",
+    "education_dns_refresh_seconds": "pfSense resolves the SCR_EDU_ALLOW hostnames itself",
+    "include_ipv6_in_education": "pfSense resolves the SCR_EDU_ALLOW hostnames itself",
+}
 
 
 class FirewallCfg(_Strict):
-    mode: Literal["dry_run", "pfsense_ssh", "pfsense_pull"] = "dry_run"
+    mode: Literal["dry_run", "pfsense_pull"] = "dry_run"
     # pfSense's LAN address: in pfsense_pull mode the only source allowed to fetch the
     # desired state and acknowledge it (nginx enforces the same address).
     host: str = "192.168.12.1"
-    ssh_port: int = Field(default=22, ge=1, le=65535)
-    ssh_user: str = "screentime"
-    ssh_key_path: str = "/opt/screentime/.ssh/id_ed25519"
-    ssh_known_hosts_path: str | None = None
-    ssh_timeout_seconds: int = Field(default=10, ge=1, le=120)
-    command: str = "/usr/local/sbin/screenctl"
-    use_sudo: bool = True
-    # Reuse one SSH connection for every wrapper call (ControlMaster). A new key exchange per
-    # call costs about a second on a Raspberry Pi 1. Switch off if pfSense's sshd objects.
-    ssh_multiplex: bool = True
-    active_table: str = "SCR_ACTIVE"
-    education_table: str = "SCR_EDU_ALLOW"
+    # How often the desired state is recomputed and the firewall's health re-checked.
     reconcile_seconds: int = Field(default=30, ge=5, le=3600)
     # Longest lease the firewall is given (plan 6.3). The firewall renews leases on every poll,
     # so this must cover at least three polls; it bounds how long a device stays on if this
@@ -186,8 +170,17 @@ class FirewallCfg(_Strict):
     # pfSense has probably failed open. It must equal pfSense's value; firewall-check compares
     # it with the value pfSense reports in its acknowledgements.
     stale_grace_seconds: int = Field(default=600, ge=120, le=86400)
-    education_dns_refresh_seconds: int = Field(default=300, ge=30, le=86400)
-    include_ipv6_in_education: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _explain_removed_settings(cls, raw: Any) -> Any:
+        if isinstance(raw, dict):
+            moved = [f"firewall.{k}: {why}" for k, why in _MOVED_FIREWALL_KEYS.items() if k in raw]
+            if raw.get("mode") == "pfsense_ssh":
+                moved.append("firewall.mode pfsense_ssh is gone: use pfsense_pull (plan 6)")
+            if moved:
+                raise ValueError("\n".join(moved))
+        return raw
 
     @model_validator(mode="after")
     def _warning_before_fail_open(self) -> FirewallCfg:
@@ -195,19 +188,13 @@ class FirewallCfg(_Strict):
             raise ValueError("degraded_after_seconds must be less than stale_grace_seconds")
         return self
 
-    @field_validator("active_table", "education_table")
+    @field_validator("host")
     @classmethod
-    def _table_name(cls, value: str) -> str:
-        if not _TABLE_RE.match(value):
-            raise ValueError("must be a simple pf table name (letters, digits, underscore)")
-        return value
-
-    @field_validator("command", "host", "ssh_user")
-    @classmethod
-    def _no_shell_metacharacters(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9_./:@-]+", value):
-            raise ValueError("contains characters that are not allowed")
-        return value
+    def _ipv4_host(cls, value: str) -> str:
+        try:
+            return str(ipaddress.IPv4Address(value))
+        except ValueError as exc:
+            raise ValueError(f"must be pfSense's IPv4 address, got {value!r}") from exc
 
 
 class NotificationsCfg(_Strict):
@@ -315,7 +302,6 @@ class AppConfig(_Strict):
     devices: dict[str, DeviceCfg]
     sessions: SessionsCfg = Field(default_factory=SessionsCfg)
     parents: ParentsCfg = Field(default_factory=ParentsCfg)
-    always_allowed: dict[str, ServiceCfg] = Field(default_factory=dict)
     firewall: FirewallCfg = Field(default_factory=FirewallCfg)
     notifications: NotificationsCfg = Field(default_factory=NotificationsCfg)
     security: SecurityCfg = Field(default_factory=SecurityCfg)
@@ -323,6 +309,27 @@ class AppConfig(_Strict):
     push: PushCfg = Field(default_factory=PushCfg)
     clock: ClockCfg = Field(default_factory=ClockCfg)
     ui: UiCfg = Field(default_factory=UiCfg)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _explain_removed_settings(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        moved: list[str] = []
+        if "always_allowed" in raw:
+            moved.append(
+                "always_allowed: the education allowlist is now the pfSense Host alias "
+                "SCR_EDU_ALLOW (hostnames, resolved by pfSense); remove it here (OPERATIONS.md 2)"
+            )
+        for dev_id, device in (raw.get("devices") or {}).items():
+            if isinstance(device, dict) and "education_allowlist" in device:
+                moved.append(
+                    f"devices.{dev_id}.education_allowlist: which devices may reach the "
+                    "allowlist is the pfSense alias SCR_EDU_DEVICES; remove it here"
+                )
+        if moved:
+            raise ValueError("\n".join(moved))
+        return raw
 
     @field_validator("timezone")
     @classmethod
@@ -432,15 +439,6 @@ class AppConfig(_Strict):
             if child.username == username:
                 return child_id
         return None
-
-    def education_hosts(self) -> dict[str, str]:
-        """Map each enabled allowlist hostname to the service that listed it."""
-        hosts: dict[str, str] = {}
-        for service, cfg in self.always_allowed.items():
-            if cfg.enabled:
-                for domain in cfg.domains:
-                    hosts.setdefault(domain, service)
-        return hosts
 
 
 def _format_validation_error(exc: ValidationError, prefix: str = "") -> list[str]:

@@ -11,8 +11,8 @@
 # Every run records its outcome in <data>/backup-status.json for the diagnostics page.
 #
 # The pfSense runtime tables are NOT backed up: they are rebuilt from the database.
-# The SSH private key is deliberately excluded; on a rebuilt Pi generate a new key and
-# authorise it on pfSense (see OPERATIONS.md).
+# The pfSense token is included only as its SHA-256 (firewall-token.sha256), so a restored
+# Pi keeps working with the token pfSense already has, and the archive does not reveal it.
 
 set -euo pipefail
 umask 077
@@ -126,7 +126,7 @@ if result != "ok":
 PY
 
 [ -e "$CONFIG_DIR/config.yaml" ] && cp -p "$CONFIG_DIR/config.yaml" "$WORK/screentime-backup/config/config.yaml"
-for f in secret.key vapid_private.pem; do
+for f in secret.key vapid_private.pem firewall-token.sha256; do
     [ -e "$DATA_DIR/$f" ] && cp -p "$DATA_DIR/$f" "$WORK/screentime-backup/data/$f"
 done
 cat > "$WORK/screentime-backup/MANIFEST" <<EOF

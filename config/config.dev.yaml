@@ -23,13 +23,10 @@ children:
     permitted_shared_devices: [kids_tv, lounge_tv]
 
 devices:
-  ipad: {display_name: "iPad", ip: "192.168.12.30", type: personal, owner: child8, education_allowlist: true}
-  iphone_child12: {display_name: "iPhone", ip: "192.168.12.31", type: personal, owner: child12, education_allowlist: true}
+  ipad: {display_name: "iPad", ip: "192.168.12.30", type: personal, owner: child8}
+  iphone_child12: {display_name: "iPhone", ip: "192.168.12.31", type: personal, owner: child12}
   kids_tv: {display_name: "Kids TV", ip: "192.168.12.40", type: shared_tv, weekday_cutoff: "18:30"}
   lounge_tv: {display_name: "Lounge TV", ip: "192.168.12.41", type: shared_tv}
-
-always_allowed:
-  duolingo: {enabled: true, domains: ["www.duolingo.com"]}
 
 firewall:
   mode: dry_run

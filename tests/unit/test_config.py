@@ -55,13 +55,10 @@ def test_example_config_matches_the_specification_defaults() -> None:
     assert cfg.children["child8"].weekend_allowance_minutes == 180
     assert cfg.sessions.child_choices_minutes == [15, 30, 60] and cfg.sessions.default_minutes == 30
     assert cfg.sessions.warning_minutes == 5 and cfg.sessions.max_concurrent_devices_per_child == 1
-    assert (
-        cfg.firewall.active_table == "SCR_ACTIVE"
-        and cfg.firewall.education_table == "SCR_EDU_ALLOW"
-    )
-    assert (
-        cfg.firewall.reconcile_seconds == 30 and cfg.firewall.education_dns_refresh_seconds == 300
-    )
+    fw = cfg.firewall
+    assert fw.mode == "dry_run" and fw.host == "192.168.12.1" and fw.reconcile_seconds == 30
+    assert (fw.max_lease_seconds, fw.ack_timeout_seconds) == (900, 150)
+    assert (fw.degraded_after_seconds, fw.stale_grace_seconds) == (180, 600)
     assert cfg.parents.until_stopped_end_at_logical_day_reset is True
 
 
@@ -71,7 +68,6 @@ def test_defaults_and_derived_helpers() -> None:
     assert (
         cfg.child_id_for_username("child12") == "child12" and cfg.child_id_for_username("x") is None
     )
-    assert cfg.education_hosts()["www.duolingo.com"] == "duolingo"
     assert cfg.storage.db_file.name == "screentime.db"
 
 
@@ -122,14 +118,21 @@ def test_unquoted_yaml_time_is_rejected_with_a_clear_message(tmp_path: Path) -> 
         (lambda r: r["sessions"].update(child_choices_minutes=[30, 15]), "ascending"),
         (lambda r: r["notifications"].update(warning_minutes=10), "must equal"),
         (lambda r: r["firewall"].update(mode="telnet"), "mode"),
-        (lambda r: r["firewall"].update(command="/bin/sh -c 'x'"), "not allowed"),
-        (lambda r: r["firewall"].update(active_table="bad name;"), "table name"),
         (lambda r: r["firewall"].update(reconcile_seconds=1), "reconcile_seconds"),
-        (lambda r: r["always_allowed"]["duolingo"].update(domains=["*.duolingo.com"]), "wildcards"),
+        (lambda r: r["firewall"].update(host="pfsense.home.arpa"), "IPv4 address"),
+        (lambda r: r["firewall"].update(stale_grace_seconds=150), "less than stale_grace"),
+        (lambda r: r["devices"].update({"a" * 33: r["devices"]["lounge_tv"]}), "32 characters"),
+        # v1.2 removed these; each says where it went (plan 6, section 9).
+        (lambda r: r["firewall"].update(mode="pfsense_ssh"), "use pfsense_pull"),
+        (lambda r: r["firewall"].update(command="/usr/local/sbin/screenctl"), "screenctl is gone"),
+        (lambda r: r["firewall"].update(ssh_user="screentime"), "there is no SSH"),
+        (lambda r: r["firewall"].update(active_table="SCR_ACTIVE"), "screentime-pull.conf"),
+        (lambda r: r["firewall"].update(education_dns_refresh_seconds=300), "SCR_EDU_ALLOW"),
         (
-            lambda r: r["always_allowed"]["duolingo"].update(domains=["not a host"]),
-            "not a valid hostname",
+            lambda r: r.update(always_allowed={"duolingo": {"domains": []}}),
+            "Host alias SCR_EDU_ALLOW",
         ),
+        (lambda r: r["devices"]["ipad"].update(education_allowlist=True), "SCR_EDU_DEVICES"),
         (lambda r: r.update(children={}), "at least one"),
         (lambda r: r["children"].update({"Bad-Id": r["children"]["child8"]}), "lowercase"),
     ],

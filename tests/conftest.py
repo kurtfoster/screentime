@@ -61,14 +61,12 @@ BASE_CONFIG: dict[str, Any] = {
             "ip": "192.168.12.30",
             "type": "personal",
             "owner": "child8",
-            "education_allowlist": True,
         },
         "iphone_child12": {
             "display_name": "iPhone",
             "ip": "192.168.12.31",
             "type": "personal",
             "owner": "child12",
-            "education_allowlist": True,
         },
         "kids_tv": {
             "display_name": "Kids TV",
@@ -93,15 +91,7 @@ BASE_CONFIG: dict[str, Any] = {
         "grants_override_all_child_restrictions": True,
         "until_stopped_end_at_logical_day_reset": True,
     },
-    "always_allowed": {
-        "duolingo": {
-            "enabled": True,
-            "domains": ["www.duolingo.com", "d35aaqx5ub95lt.cloudfront.net"],
-        },
-        "khan_academy": {"enabled": True, "domains": ["www.khanacademy.org"]},
-        "sora_school": {"enabled": True, "domains": []},
-    },
-    "firewall": {"mode": "dry_run", "reconcile_seconds": 30, "education_dns_refresh_seconds": 300},
+    "firewall": {"mode": "dry_run", "reconcile_seconds": 30},
     "notifications": {
         "browser_push_enabled": False,
         "warning_minutes": 5,

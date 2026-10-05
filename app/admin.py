@@ -337,11 +337,6 @@ def cmd_reconcile(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
             return 1
         leases = ", ".join(f"{x.device_id}={x.seconds}s" for x in result.desired.leases)
         out(f"published generation {result.generation}: {leases or 'no devices'}")
-        if args.education:
-            pushed = await ctx.resolver.refresh()
-            out(
-                f"education table: {len(pushed)} addresses; unresolved={[s.host for s in ctx.resolver.unresolved()]}"
-            )
         return 0
 
     return asyncio.run(run())
@@ -420,9 +415,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "firewall-check", help="compare config.yaml with pfSense's reported device map"
     ).set_defaults(func=cmd_firewall_check)
-    p = sub.add_parser("reconcile", help="publish the desired firewall state now")
-    p.add_argument("--education", action="store_true", help="also refresh the education allowlist")
-    p.set_defaults(func=cmd_reconcile)
+    sub.add_parser("reconcile", help="publish the desired firewall state now").set_defaults(
+        func=cmd_reconcile
+    )
     return parser
 
 

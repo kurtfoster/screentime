@@ -91,7 +91,6 @@ async def diagnostics(request: Request, principal: Principal = Depends(parent_pa
 
     data = await run_sync(load)
     enforcement = ctx.enforcement
-    resolver = ctx.resolver
     context = {
         "principal": principal,
         "csrf_token": principal.csrf_token,
@@ -113,10 +112,6 @@ async def diagnostics(request: Request, principal: Principal = Depends(parent_pa
             drift(ctx.config, ctx.pull.report, ctx.pull.published_generation) if ctx.pull else []
         ),
         "grace_minutes": int(ctx.alerts.grace().total_seconds() // 60) if ctx.alerts else None,
-        "resolver": resolver,
-        "hosts": sorted(resolver.hosts.values(), key=lambda h: (h.service, h.host)),
-        "unresolved": resolver.unresolved(),
-        "stale": resolver.stale(),
         "push_enabled": ctx.notifier.enabled,
         "fmt": ctx.calendar.local,
         **data,

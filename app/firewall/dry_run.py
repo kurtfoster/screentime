@@ -25,7 +25,6 @@ class DryRunFirewallAdapter:
         self.active: set[str] = set()
         self.active_devices: frozenset[str] = frozenset()
         self.leases: dict[str, int] = {}
-        self.education: set[str] = set()
         self.calls: list[tuple[str, ...]] = []
         self.fail_all = False
         self.fail_ops: set[str] = set()
@@ -42,14 +41,13 @@ class DryRunFirewallAdapter:
     def wipe(self) -> None:
         """Simulate a pfSense filter reload wiping dynamic table contents."""
         self.active.clear()
-        self.education.clear()
 
     def clear_calls(self) -> None:
         self.calls.clear()
 
     def ops(self) -> list[tuple[str, ...]]:
         """Calls that changed something (what pfSense would have done), for concise assertions."""
-        return [c for c in self.calls if c[0] in {"apply", "kill_states", "replace_education_ips"}]
+        return [c for c in self.calls if c[0] in {"apply", "kill_states"}]
 
     async def publish(self, desired: DesiredState) -> int:
         self._record("publish")
@@ -75,8 +73,3 @@ class DryRunFirewallAdapter:
         if self.fail_all or "health" in self.fail_ops:
             return FirewallHealth(ok=False, detail="dry-run injected failure")
         return FirewallHealth(ok=True, detail="dry-run")
-
-    async def replace_education_ips(self, ips: set[str]) -> None:
-        canonical = {validate_ip(ip, allow_v6=True) for ip in ips}
-        self._record("replace_education_ips", *sorted(canonical))
-        self.education = canonical

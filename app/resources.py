@@ -10,22 +10,18 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import shutil
 import subprocess
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
-
 from app.clock import Clock
 from app.db import Database
-from app.models import FirewallEvent
 
 log = logging.getLogger("screentime.resources")
 
@@ -127,13 +123,6 @@ def _vcgencmd(argv: list[str]) -> str | None:
     return done.stdout if done.returncode == 0 else None
 
 
-def percentile_95(values: Iterable[int]) -> int | None:
-    ordered = sorted(values)
-    if not ordered:
-        return None
-    return ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]  # nearest-rank
-
-
 def read_backup_status(directory: Path) -> dict[str, Any] | None:
     """Written by deploy/backup.sh after every run (it runs as a separate systemd unit)."""
     raw = _read(directory / BACKUP_STATUS_FILE)
@@ -154,8 +143,7 @@ class ResourceSnapshot:
     available_mb: int | None
     load: tuple[float, float, float] | None
     tick_lag_max_seconds: float | None
-    ssh_p95_ms: int | None
-    ssh_operations: int
+    pfsense_fetch_age_seconds: int | None  # pull mode: seconds since pfSense last fetched
     argon2_verify_seconds: float | None
     clock_synchronised: bool
     throttling: list[str] | None
@@ -189,7 +177,7 @@ class ResourceSnapshot:
             ("System memory available", num(self.available_mb, " MB") + (" LOW" if self.low_memory else "")),
             ("Load average (1/5/15 min)", "n/a" if self.load is None else " / ".join(f"{v:.2f}" for v in self.load)),
             ("Timer tick lag (max, last hour)", num(self.tick_lag_max_seconds, " s", "{:.1f}")),
-            ("pfSense SSH p95 (last hour)", f"{num(self.ssh_p95_ms, ' ms')} over {self.ssh_operations} operations"),
+            ("pfSense last fetch", "n/a" if self.pfsense_fetch_age_seconds is None else f"{self.pfsense_fetch_age_seconds} s ago"),
             ("Last password check", num(self.argon2_verify_seconds, " s", "{:.2f}")),
             ("Clock synchronised", "yes" if self.clock_synchronised else "NO"),
             ("Under-voltage / throttling", throttling),
@@ -208,7 +196,9 @@ class ResourceMonitor:
         *,
         clock_synchronised: Callable[[], bool],
         last_verify_seconds: Callable[[], float | None],
+        last_pfsense_fetch: Callable[[], datetime | None] = lambda: None,
     ) -> None:
+        self._last_pfsense_fetch = last_pfsense_fetch
         self._db = db
         self._clock = clock
         self._tick_lag = tick_lag
@@ -217,17 +207,9 @@ class ResourceMonitor:
         self._clock_synchronised = clock_synchronised
         self._last_verify_seconds = last_verify_seconds
 
-    def _ssh_durations(self, since: datetime) -> list[int]:
-        with self._db.session() as session:
-            return list(
-                session.scalars(
-                    select(FirewallEvent.duration_ms).where(FirewallEvent.timestamp >= since)
-                )
-            )
-
     def snapshot(self) -> ResourceSnapshot:
         now = self._clock.now()
-        durations = self._ssh_durations(now - timedelta(hours=1))
+        fetched = self._last_pfsense_fetch()
         rss, peak = process_memory_mb()
         return ResourceSnapshot(
             taken_at=now.isoformat(timespec="seconds"),
@@ -236,8 +218,9 @@ class ResourceMonitor:
             available_mb=available_memory_mb(),
             load=load_average(),
             tick_lag_max_seconds=self._tick_lag.max_lag(),
-            ssh_p95_ms=percentile_95(durations),
-            ssh_operations=len(durations),
+            pfsense_fetch_age_seconds=(
+                None if fetched is None else int((now - fetched).total_seconds())
+            ),
             argon2_verify_seconds=self._last_verify_seconds(),
             clock_synchronised=self._clock_synchronised(),
             throttling=throttle_flags(),

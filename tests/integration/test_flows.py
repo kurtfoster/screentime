@@ -154,24 +154,6 @@ def test_end_today_revokes_access_then_grant_permits_only_the_window(
     assert start(child8, "ipad", 15).status_code == 200
 
 
-def test_education_traffic_does_not_need_a_session(app_env: AppEnv) -> None:
-    from app.firewall.resolver import DnsAnswer
-
-    app_env.dns.answers["www.duolingo.com"] = DnsAnswer(
-        frozenset({"104.18.1.1", "2606:4700::1"}), ("cdn.example",), 300
-    )
-    app_env.dns.answers["d35aaqx5ub95lt.cloudfront.net"] = DnsAnswer(
-        frozenset({"13.32.1.1"}), (), 60
-    )
-    app_env.dns.answers["www.khanacademy.org"] = DnsAnswer(frozenset({"151.101.1.1"}), (), 300)
-    app_env.call(app_env.ctx.resolver.refresh)
-    assert app_env.firewall.education == {"104.18.1.1", "2606:4700::1", "13.32.1.1", "151.101.1.1"}
-    assert app_env.firewall.active == set()  # entertainment stays blocked
-
-
-# --- fail closed ---------------------------------------------------------------------------
-
-
 def test_firewall_failure_means_no_grant_and_no_charge(
     app_env: AppEnv, child8: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -515,9 +497,7 @@ def test_diagnostics_page_shows_required_fields(
         IPAD,
         "Applied",
         "Generation",
-        "Last refresh",
-        "Unresolved hostnames",
-        "www.duolingo.com",
+        "SCR_EDU_ALLOW",
         "Runtime libraries",
         "argon2-cffi",
     ):

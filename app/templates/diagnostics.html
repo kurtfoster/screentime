@@ -56,34 +56,8 @@
   </section>
   {% else %}
   <section class="card stack">
-    <h2>Education allowlist</h2>
-    <table>
-      <tr><th>Last refresh</th><td>{% if resolver.last_refresh_at %}{{ fmt(resolver.last_refresh_at).strftime("%H:%M:%S") }}{% else %}not yet{% endif %}</td></tr>
-      <tr><th>Last table update</th><td>{% if resolver.last_push_at %}{{ fmt(resolver.last_push_at).strftime("%H:%M:%S") }} &#10003;{% else %}never{% endif %}{% if resolver.last_push_ok is false %} &#9888; {{ resolver.last_push_error }}{% endif %}</td></tr>
-      <tr><th>Addresses in table</th><td>{{ resolver.pushed | length }}</td></tr>
-      <tr><th>Unresolved hostnames</th><td>{% if unresolved %}&#9888; {{ unresolved | map(attribute="host") | join(", ") }}{% else %}none{% endif %}</td></tr>
-      <tr><th>Stale (using last known good)</th><td>{{ stale | map(attribute="host") | join(", ") or "none" }}</td></tr>
-    </table>
-    {% if hosts %}
-    <div class="scroll">
-      <table>
-        <thead><tr><th>Service</th><th>Hostname</th><th>Status</th><th>Addresses</th><th>Last OK</th></tr></thead>
-        <tbody>
-        {% for h in hosts %}
-          <tr>
-            <td>{{ h.service }}</td>
-            <td class="mono">{{ h.host }}{% if h.cnames %}<br><span class="muted small">&#8627; {{ h.cnames | join(" → ") }}</span>{% endif %}</td>
-            <td>{% if h.status == "ok" %}&#10003; ok{% elif h.status == "stale" %}&#9888; stale ({{ h.consecutive_failures }} failures){% elif h.status == "failed" %}&#10007; failed: {{ h.last_error }}{% else %}&hellip; pending{% endif %}</td>
-            <td class="mono">{{ h.ips | sort | join(", ") }}</td>
-            <td>{% if h.last_success_at %}{{ fmt(h.last_success_at).strftime("%H:%M:%S") }}{% else %}never{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="muted">No allowlist hostnames are configured. Add domains under <code>always_allowed</code> in config.yaml.</p>
-    {% endif %}
+    <h2>Firewall</h2>
+    <p class="muted small">firewall.mode is {{ firewall_mode }}: nothing is enforced on pfSense. The education allowlist is the pfSense alias SCR_EDU_ALLOW.</p>
   </section>
   {% endif %}
 

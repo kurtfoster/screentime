@@ -22,6 +22,8 @@ WHEELHOUSE=""
 DEPS=""
 NTP_SERVER=192.168.12.1
 FIREWALL_HOST=192.168.12.1
+NGINX_DIR=/etc/nginx
+NGINX_DIR_EXPLICIT=0
 BACKUP_DEST=/mnt/screentime-backup
 BOOT_CONFIG=/boot/firmware/config.txt
 BOOT_CONFIG_EXPLICIT=0
@@ -80,6 +82,7 @@ while [ $# -gt 0 ]; do
         --deps) DEPS=$2; shift 2 ;;
         --ntp-server) NTP_SERVER=$2; shift 2 ;;
         --firewall-host) FIREWALL_HOST=$2; shift 2 ;;
+        --nginx-dir) NGINX_DIR=$2; NGINX_DIR_EXPLICIT=1; shift 2 ;;   # used by the test-suite
         --backup-dest) BACKUP_DEST=$2; shift 2 ;;
         --boot-config) BOOT_CONFIG=$2; BOOT_CONFIG_EXPLICIT=1; shift 2 ;;
         --no-tls) NO_TLS=1; shift ;;
@@ -107,7 +110,6 @@ esac
 APP_DIR="$PREFIX/app"
 CONFIG_DIR="$PREFIX/config"
 DATA_DIR="$PREFIX/data"
-SSH_DIR="$PREFIX/.ssh"
 VENV="$PREFIX/venv"
 
 # Every operator command in the printed next steps runs as the service account, from the app.
@@ -191,9 +193,9 @@ fi
 
 run install -d -m 0755 "$PREFIX" "$APP_DIR"
 run install -d -m 0750 "$CONFIG_DIR"
-run install -d -m 0700 "$DATA_DIR" "$SSH_DIR"
+run install -d -m 0700 "$DATA_DIR"
 if [ "$NO_SYSTEM" -eq 0 ]; then
-    run chown "$OWNER" "$PREFIX" "$CONFIG_DIR" "$DATA_DIR" "$SSH_DIR"
+    run chown "$OWNER" "$PREFIX" "$CONFIG_DIR" "$DATA_DIR"
 fi
 
 # --- application files -----------------------------------------------------------------------
@@ -328,19 +330,39 @@ fi
 
 # --- nginx -----------------------------------------------------------------------------------
 
-if [ "$NO_NGINX" -eq 0 ]; then
+# Debian enables a stock "default" site that answers every request not addressed to a known
+# name, with nginx's welcome page and version (R5, CWE-200). Remove it, but only when it is
+# exactly Debian's link: anything else may be the owner's own, so leave it and say so.
+remove_debian_default_site() {
+    local_link="$NGINX_DIR/sites-enabled/default"
+    if [ -L "$local_link" ]; then
+        target=$(readlink "$local_link")
+        case "$target" in
+            /etc/nginx/sites-available/default|../sites-available/default|"$NGINX_DIR/sites-available/default")
+                run rm -f "$local_link"
+                log "Removed nginx's stock Debian site ($local_link -> $target)"
+                ;;
+            *) warn "$local_link points to $target, not Debian's stock site: left in place" ;;
+        esac
+    elif [ -e "$local_link" ]; then
+        warn "$local_link is not Debian's stock link: left in place (it may answer other requests)"
+    fi
+}
+
+if [ "$NO_NGINX" -eq 0 ] || [ "$NGINX_DIR_EXPLICIT" -eq 1 ]; then
     if ! command -v nginx >/dev/null 2>&1; then
         warn "nginx is not installed (sudo apt install nginx); skipping the reverse proxy"
     else
         log "Configuring nginx"
-        run install -d -m 0755 /etc/nginx/snippets
-        run install -m 0644 "$APP_DIR/deploy/screentime-proxy.conf" /etc/nginx/snippets/screentime-proxy.conf
-        run install -m 0644 "$APP_DIR/deploy/screentime-lan-only.conf" /etc/nginx/snippets/screentime-lan-only.conf
-        if [ -d /etc/nginx/sites-available ]; then
-            site=/etc/nginx/sites-available/screentime
-            enabled=/etc/nginx/sites-enabled/screentime
+        run install -d -m 0755 "$NGINX_DIR/snippets"
+        run install -m 0644 "$APP_DIR/deploy/screentime-proxy.conf" "$NGINX_DIR/snippets/screentime-proxy.conf"
+        run install -m 0644 "$APP_DIR/deploy/screentime-lan-only.conf" "$NGINX_DIR/snippets/screentime-lan-only.conf"
+        if [ -d "$NGINX_DIR/sites-available" ]; then
+            site=$NGINX_DIR/sites-available/screentime
+            enabled=$NGINX_DIR/sites-enabled/screentime
+            remove_debian_default_site
         else
-            site=/etc/nginx/conf.d/screentime.conf
+            site=$NGINX_DIR/conf.d/screentime.conf
             enabled=""
         fi
         if [ "$DRY_RUN" -eq 1 ]; then

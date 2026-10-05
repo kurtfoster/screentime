@@ -27,9 +27,7 @@ from app.firewall.audited import AuditedFirewall
 from app.firewall.base import FirewallAdapter
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.firewall.generations import DbGenerations
-from app.firewall.pfsense_ssh import PfSenseSshFirewallAdapter
 from app.firewall.pull import PullFirewallAdapter
-from app.firewall.resolver import DnsClient, EducationResolver
 from app.models import FirewallAck, FirewallEvent, WebSession
 from app.notifications import Notifier
 from app.orchestrator import Orchestrator
@@ -55,7 +53,6 @@ class AppContext:
     views: ViewBuilder
     firewall: AuditedFirewall
     enforcement: EnforcementService
-    resolver: EducationResolver
     notifier: Notifier
     orchestrator: Orchestrator
     auth: AuthService
@@ -96,7 +93,6 @@ def build_context(
     *,
     adapter: FirewallAdapter | None = None,
     clock: Clock | None = None,
-    dns: DnsClient | None = None,
     push_sender: PushSender | None = None,
     migrate: bool = True,
     enable_push: bool = True,
@@ -123,12 +119,6 @@ def build_context(
             adapter = PullFirewallAdapter(
                 db, clock, generations, config.firewall.degraded_after_seconds
             )
-        elif config.firewall.mode == "pfsense_ssh":
-            adapter = PfSenseSshFirewallAdapter(
-                config.firewall,
-                control_dir=config.storage.data_dir / "ssh-mux",
-                generations=generations,
-            )
         else:
             adapter = DryRunFirewallAdapter(generations)
     firewall = AuditedFirewall(adapter, db, clock, config.firewall.mode)
@@ -151,11 +141,6 @@ def build_context(
     policy = PolicyEngine(config, calendar)
     sessions = SessionService(db, config, calendar, clock)
     enforcement = EnforcementService(db, config, clock, calendar, firewall, clock_sync)
-    if dns is None:
-        from app.firewall.resolver import DnsPythonClient
-
-        dns = DnsPythonClient()
-    resolver = EducationResolver(config, dns, firewall, clock)
     notifier = Notifier(db, config, clock, secret, push_sender, public_key)
     orchestrator = Orchestrator(db, config, clock, sessions, enforcement, notifier)
     auth = AuthService(db, config, clock, secret)
@@ -169,6 +154,11 @@ def build_context(
         config.storage.data_dir,
         clock_synchronised=enforcement.clock_synchronised,
         last_verify_seconds=lambda: auth.passwords.last_verify_seconds,
+        last_pfsense_fetch=(
+            (lambda: adapter.last_fetch_at)
+            if isinstance(adapter, PullFirewallAdapter)
+            else (lambda: None)
+        ),
     )
     ctx = AppContext(
         config=config,
@@ -180,7 +170,6 @@ def build_context(
         views=ViewBuilder(config, calendar, policy),
         firewall=firewall,
         enforcement=enforcement,
-        resolver=resolver,
         notifier=notifier,
         orchestrator=orchestrator,
         auth=auth,
@@ -197,7 +186,6 @@ def build_context(
     )
     ctx.scheduler = Scheduler(
         orchestrator,
-        resolver,
         config,
         ctx.maintenance,
         tick_lag=tick_lag,

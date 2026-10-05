@@ -58,7 +58,8 @@ def test_install_lays_out_directories_files_and_permissions(tmp_path: Path) -> N
     prefix = tmp_path / "opt"
     res = install(prefix)
     assert res.returncode == 0, res.stderr
-    assert mode(prefix / "data") == 0o700 and mode(prefix / ".ssh") == 0o700
+    assert mode(prefix / "data") == 0o700
+    assert not (prefix / ".ssh").exists()  # pfSense pulls: the Pi holds no SSH key (plan 6)
     assert not (prefix / "backups").exists()  # backups go to a separate drive, not the SD card
     assert mode(prefix / "config") == 0o750
     assert not (prefix / "config" / "users.yaml").exists()  # logins live in the database
@@ -271,6 +272,7 @@ def make_prefix(tmp_path: Path) -> Path:
     )
     (prefix / "data" / "secret.key").write_bytes(b"s" * 32)
     (prefix / "data" / "vapid_private.pem").write_text("pem")
+    (prefix / "data" / "firewall-token.sha256").write_text("ab" * 32 + "\n")
     con = sqlite3.connect(prefix / "data" / "screentime.db")
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
@@ -315,6 +317,7 @@ def test_backup_is_consistent_private_and_complete(tmp_path: Path) -> None:
         "config/config.yaml",
         "data/secret.key",
         "data/vapid_private.pem",
+        "data/firewall-token.sha256",  # a hash: pfSense keeps its token after a restore
         "MANIFEST",
     ):
         assert (root / rel).exists(), rel
@@ -395,8 +398,9 @@ def test_restore_onto_a_fresh_prefix_reproduces_the_database_and_config(tmp_path
     assert "Australia/Melbourne" in (fresh / "config" / "config.yaml").read_text()
     assert (fresh / "config" / "config.yaml.pre-restore").read_text() == "# fresh default\n"
     assert mode(fresh / "data" / "screentime.db") == 0o600
+    assert mode(fresh / "data" / "firewall-token.sha256") == 0o600
     assert (fresh / "data" / "secret.key").read_bytes() == b"s" * 32
-    assert "SSH key is not part of a backup" in res.stdout
+    assert "pfSense keeps using its token" in res.stdout and "firewall-check" in res.stdout
 
 
 def test_restore_refuses_bad_input(tmp_path: Path) -> None:
@@ -662,3 +666,73 @@ def test_only_pfsense_reaches_the_firewall_location() -> None:
 def test_the_firewall_host_must_be_an_ipv4_address(tmp_path: Path, bad: str) -> None:
     res = install(tmp_path / "opt", "--firewall-host", bad)
     assert res.returncode == 64 and "IPv4" in res.stderr
+
+
+# --- installer item I1 (R5): no stock nginx page, no version, for any request ---------------
+
+
+def test_the_screentime_site_is_the_default_server_and_hides_the_version() -> None:
+    conf = (DEPLOY / "nginx-screen.conf").read_text()
+    listens = re.findall(r"^\s*listen (.+);$", conf, re.M)
+    assert listens == [
+        "80 default_server",
+        "[::]:80 default_server",
+        "443 ssl default_server",
+        "[::]:443 ssl default_server",
+    ]
+    # Once, before the first server block: it covers every server, the default one included.
+    assert conf.count("server_tokens off;") == 1
+    assert conf.index("server_tokens off;") < conf.index("server {")
+
+
+def fake_nginx_host(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    nginx = tmp_path / "nginx"
+    (nginx / "sites-available").mkdir(parents=True)
+    (nginx / "sites-enabled").mkdir()
+    (nginx / "sites-available" / "default").write_text("server { listen 80 default_server; }\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("nginx", "systemctl"):
+        stub = bin_dir / tool
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    return nginx, {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    "target", ["../sites-available/default", "/etc/nginx/sites-available/default"]
+)
+def test_installer_removes_debians_stock_default_site(tmp_path: Path, target: str) -> None:
+    nginx, env = fake_nginx_host(tmp_path)
+    (nginx / "sites-enabled" / "default").symlink_to(target)
+    res = sh(
+        DEPLOY / "install.sh", "--no-system", "--skip-venv", "--no-tls",
+        "--prefix", tmp_path / "opt", "--nginx-dir", nginx, env=env,
+    )  # fmt: skip
+    assert res.returncode == 0, res.stderr
+    assert not (nginx / "sites-enabled" / "default").is_symlink()
+    assert "Removed nginx's stock Debian site" in res.stdout
+    site = (nginx / "sites-available" / "screentime").read_text()
+    assert "@" not in re.sub(r"'[^']*'", "", site) and "allow 192.168.12.1;" in site
+    assert (
+        nginx / "sites-enabled" / "screentime"
+    ).resolve() == nginx / "sites-available" / "screentime"
+    assert (nginx / "sites-available" / "default").exists()  # only the link goes
+
+
+@pytest.mark.parametrize("kind", ["other-link", "regular-file"])
+def test_installer_leaves_a_default_site_that_is_not_debians(tmp_path: Path, kind: str) -> None:
+    nginx, env = fake_nginx_host(tmp_path)
+    default = nginx / "sites-enabled" / "default"
+    if kind == "other-link":
+        (nginx / "sites-available" / "mine").write_text("server {}\n")
+        default.symlink_to("../sites-available/mine")
+    else:
+        default.write_text("server {}\n")
+    res = sh(
+        DEPLOY / "install.sh", "--no-system", "--skip-venv", "--no-tls",
+        "--prefix", tmp_path / "opt", "--nginx-dir", nginx, env=env,
+    )  # fmt: skip
+    assert res.returncode == 0, res.stderr
+    assert default.exists() or default.is_symlink()
+    assert "left in place" in res.stderr

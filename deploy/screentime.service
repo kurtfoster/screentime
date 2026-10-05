@@ -23,14 +23,15 @@ RestartSec=3
 # A Raspberry Pi 1 needs about a minute to import the libraries; 90 s (the default) is too tight.
 TimeoutStartSec=300
 
-# Hardening: the service needs its data directory and outbound SSH/DNS, nothing else.
+# Hardening: the service needs its data directory, and outbound HTTPS only for Web Push.
+# pfSense connects to it (through nginx); it never connects to pfSense.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-# data holds the database and the SSH control socket (ssh-mux); .ssh is written only for
-# known_hosts. /run/screentime (tmpfs) takes the once-a-minute status snapshot.
-ReadWritePaths=/opt/screentime/data /opt/screentime/.ssh
+# data holds the database and secrets; /run/screentime (tmpfs) takes the once-a-minute
+# status snapshot.
+ReadWritePaths=/opt/screentime/data
 RuntimeDirectory=screentime
 RuntimeDirectoryMode=0700
 PrivateDevices=true
