@@ -253,3 +253,31 @@ def test_hidden_dashboards_stop_polling_and_refresh_when_shown(
     page.wait_for_timeout(500)
     assert len(polls) >= 1  # refreshed at once, without waiting for the next poll
     ctx.close()
+
+
+def test_parent_sets_a_childs_password_from_the_dashboard(
+    browser: Browser, live_app: LiveApp
+) -> None:
+    ctx, page = open_page(browser)
+    sign_in(page, live_app, "parents")
+    page.locator('a[href="/parent/user/child8/password"]').click()
+    new = page.locator('input[name="new_password"]')
+    new.fill("kea-nest-3")
+    toggle = page.locator("[data-toggle-password]").first
+    toggle.click()
+    expect(new).to_have_attribute("type", "text")  # show/hide works (M8)
+    expect(toggle).to_have_attribute("aria-pressed", "true")
+    page.locator('input[name="confirm_password"]').fill("kea-nest-3")
+    page.locator('input[name="parent_password"]').fill(PASSWORDS["parents"])
+    page.get_by_role("button", name="Set password").click()
+    expect(page.get_by_text("Password set for Child 8")).to_be_visible()
+    page.wait_for_url("**/parent", timeout=SLOW)
+    ctx.close()
+
+    ctx, page = open_page(browser)
+    page.goto(f"{live_app.base_url}/login")
+    page.fill('input[name="username"]', "child8")
+    page.fill('input[name="password"]', "kea-nest-3")
+    page.click('button[type="submit"]')
+    page.wait_for_url("**/child")
+    ctx.close()

@@ -12,6 +12,12 @@
   </div>
   {% endif %}
 
+  {% if view.account_lines %}
+  <section class="card small muted" aria-label="Recent sign-ins and password changes">
+    {% for line in view.account_lines %}<p>{{ line }}</p>{% endfor %}
+  </section>
+  {% endif %}
+
   {% for c in view.children %}
   <section class="card stack" aria-label="{{ c.name }}">
     <div class="row spread">
@@ -21,6 +27,7 @@
       </span>
     </div>
     <p class="big">{{ c.remaining_text }} <span>remaining</span></p>
+    {% if not c.has_password %}<p class="notice notice-warn">&#128273; No password set for {{ c.name }}, so they cannot sign in yet.</p>{% endif %}
 
     {% for sid, device, ends in c.sessions %}
     <div class="row spread">
@@ -40,6 +47,7 @@
       {% if c.locked %}
       <button class="btn btn-secondary needs-server" type="button" data-api-post="/api/parent/child/{{ c.child_id }}/clear-day-lock" data-done="Day lock cleared.">CLEAR DAY LOCK</button>
       {% endif %}
+      <a class="btn btn-secondary needs-server" href="/parent/user/{{ c.username }}/password">Set password</a>
     </div>
   </section>
   {% endfor %}

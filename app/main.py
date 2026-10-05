@@ -25,7 +25,7 @@ from app.audit import configure_logging
 from app.config import ConfigError, config_path_from_env, load_config
 from app.context import AppContext, build_context
 from app.deps import ApiError, LoginRequired, client_ip, render
-from app.routes import api, auth, child, health, parent
+from app.routes import account, api, auth, child, health, parent
 from app.runtime import limit_worker_threads
 from app.version import VERSION
 
@@ -160,7 +160,7 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
         return HTMLResponse("Not found", status_code=404)
 
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-    for module in (auth, child, parent, api, health):
+    for module in (auth, account, child, parent, api, health):
         app.include_router(module.router)
     return app
 

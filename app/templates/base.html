@@ -25,10 +25,20 @@
     {% if principal %}
     <nav aria-label="Account">
       {% block nav %}{% endblock %}
-      <form method="post" action="/logout">
-        <input type="hidden" name="csrf_token" value="{{ principal.csrf_token }}">
-        <button class="btn btn-secondary btn-small" type="submit">Sign out</button>
-      </form>
+      <details class="menu">
+        <summary class="btn btn-secondary btn-small">Account</summary>
+        <div class="menu-panel">
+          <a class="menu-item" href="/account/password">Change password</a>
+          {% if principal.is_parent %}
+          <a class="menu-item" href="/account/parents">Parents</a>
+          <a class="menu-item" href="/parent/diagnostics">Diagnostics</a>
+          {% endif %}
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ principal.csrf_token }}">
+            <button class="menu-item" type="submit">Sign out</button>
+          </form>
+        </div>
+      </details>
     </nav>
     {% endif %}
   </header>

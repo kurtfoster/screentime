@@ -46,6 +46,14 @@ class TvStartRequest(_Body):
     request_id: str | None = Field(default=None, pattern=_REQ)
 
 
+class SetPasswordRequest(_Body):
+    """A parent setting a child's or the other parent's password, confirmed with their own."""
+
+    new_password: str = Field(min_length=1, max_length=256)
+    confirm_password: str = Field(min_length=1, max_length=256)
+    parent_password: str = Field(min_length=1, max_length=256)
+
+
 class PushSubscribeRequest(_Body):
     endpoint: str = Field(max_length=1024)
     keys: dict[str, Any]

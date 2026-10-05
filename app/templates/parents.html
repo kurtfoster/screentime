@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Parents · Screen Time{% endblock %}
+{% block heading %}Parents{% endblock %}
+{% block content %}
+<section class="card stack narrow">
+  <h2>Parent logins</h2>
+  <p class="muted small">Each parent has their own login. Parent logins are added or removed on the controller itself (admin CLI).</p>
+  {% for p in parents %}
+  <div class="row spread list-row">
+    <div>
+      <strong>{{ p.display_name }}</strong> <span class="muted mono small">{{ p.username }}</span><br>
+      <span class="muted small">{% if p.password_changed_at %}Password set {{ fmt(p.password_changed_at, "%a %d %b %H:%M") }} by {{ p.password_changed_by }}{% else %}No password set{% endif %}</span>
+    </div>
+    {% if p.username == principal.username %}
+    <a class="btn btn-secondary btn-small" href="/account/password">Change password</a>
+    {% else %}
+    <a class="btn btn-secondary btn-small" href="/parent/user/{{ p.username }}/password">Reset password</a>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <a class="btn btn-secondary" href="/parent">Back</a>
+</section>
+{% endblock %}

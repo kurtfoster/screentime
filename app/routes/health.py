@@ -30,11 +30,18 @@ async def ready(request: Request) -> Response:
     db_ok = await run_sync(ctx.db.check)
     firewall_ok = not ctx.enforcement.degraded
     clock_ok = ctx.enforcement.clock_synchronised()
-    ok = db_ok and firewall_ok and clock_ok
+    parents = len(await run_sync(ctx.accounts.parents)) if db_ok else 0
+    missing = (
+        [a.username for a in await run_sync(ctx.accounts.missing_child_logins)] if db_ok else []
+    )
+    # No parent login means nobody can run the household: not ready. A child without a
+    # password is reported but is not a fault; a parent sets it from the dashboard.
+    ok = db_ok and firewall_ok and clock_ok and parents > 0
     return JSONResponse(
         {
             "status": "ready" if ok else "degraded",
             "database": "ok" if db_ok else "error",
+            "accounts": {"parents": parents, "children_without_password": missing},
             "firewall": "ok" if firewall_ok else "degraded",
             "clock": "synchronised" if clock_ok else "not synchronised",
             "version": VERSION,

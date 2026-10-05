@@ -106,6 +106,42 @@
     refreshLive();
   });
 
+  // ---- password fields: show/hide toggle (M8) --------------------------------------------
+  document.addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-toggle-password]");
+    if (!toggle) return;
+    const input = toggle.parentElement?.querySelector("input");
+    if (!input) return;
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    toggle.textContent = show ? "Hide" : "Show";
+    toggle.setAttribute("aria-pressed", String(show));
+    toggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  });
+
+  // ---- forms posted as JSON to the API (set a child's or the other parent's password) -------
+  document.addEventListener("submit", async (event) => {
+    const form = event.target.closest("form[data-api-form]");
+    if (!form) return;
+    event.preventDefault();
+    const submit = form.querySelector('button[type="submit"]');
+    const body = Object.fromEntries(new FormData(form).entries());
+    if (body.new_password !== undefined && body.new_password !== body.confirm_password) {
+      showFlash("The two new passwords do not match.", "error");
+      return;
+    }
+    if (submit) submit.disabled = true;
+    const { status, data } = await postJson(form.dataset.apiForm, body);
+    if (submit) submit.disabled = false;
+    form.querySelectorAll('input[type="password"], input[type="text"]').forEach((i) => { i.value = ""; });
+    if (status >= 200 && status < 300 && data.ok) {
+      showFlash(data.message || "Done.", "ok");
+      if (form.dataset.next) setTimeout(() => location.assign(form.dataset.next), 1500);
+    } else {
+      showFlash(data.message || "That did not work.", "error");
+    }
+  });
+
   // ---- start-session form -----------------------------------------------------------------
   function initStartForm() {
     const form = document.getElementById("start-form");

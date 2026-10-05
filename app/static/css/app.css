@@ -67,6 +67,23 @@ body {
 .topbar h1 { font-size: 1.1rem; margin: 0; }
 .topbar nav { display: flex; align-items: center; gap: 10px; }
 .topbar form { margin: 0; }
+.topbar h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Account menu (M2): one button, so the header never wraps on a 320 px phone. */
+.menu { position: relative; }
+.menu > summary { list-style: none; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu-panel {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 220px;
+  display: grid; padding: 6px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: var(--shadow);
+}
+.menu-item {
+  display: flex; align-items: center; width: 100%; min-height: 48px; padding: 0 14px;
+  border: 0; border-radius: 10px; background: none; color: var(--text); text-decoration: none;
+  font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--primary-soft); }
 
 main { max-width: 720px; margin: 0 auto; padding: var(--gutter); }
 .stack { display: grid; gap: var(--gutter); }
@@ -169,6 +186,16 @@ input[type="text"], input[type="password"] {
 }
 input:focus-visible { outline: 3px solid var(--primary); outline-offset: 1px; }
 label.field { display: grid; gap: 6px; font-weight: 600; }
+.hint { font-size: 0.9rem; font-weight: 400; color: var(--muted); }
+.pw-wrap { display: flex; gap: 8px; }
+.pw-wrap input { flex: 1; min-width: 0; }
+.pw-toggle {
+  flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0 12px; border-radius: 12px;
+  border: 2px solid var(--border); background: var(--surface); color: var(--primary);
+  font: inherit; font-size: 0.95rem; font-weight: 700; cursor: pointer;
+}
+.narrow { max-width: 480px; margin: 0 auto; }
+.list-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .login { max-width: 420px; margin: 8vh auto 0; }
 
 .needs-server[disabled] { opacity: 0.4; }

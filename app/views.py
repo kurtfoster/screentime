@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,9 +16,11 @@ from app.models import (
     SESSION_ACTIVE,
     TYPE_CHILD,
     TYPE_PARENT,
+    AuditEvent,
     DayLock,
     ParentOverride,
     SessionRecord,
+    User,
 )
 from app.policy import PolicyEngine, Reason, format_duration
 from app.state import active_child_sessions, allowance_summary, load_facts
@@ -85,6 +88,8 @@ class ChildView:
 @dataclass
 class ChildRow:
     child_id: str
+    username: str
+    has_password: bool
     name: str
     remaining_minutes: int
     remaining_text: str
@@ -125,7 +130,12 @@ class ParentView:
     grants: list[int]
     tv_choices: list[int]
     allow_until_stopped: bool
+    account_lines: list[str]
     state_key: str
+
+
+# Password events shown on the parent dashboard for this long (plan 7.1).
+_RECENT_ACCOUNT_EVENTS = timedelta(hours=24)
 
 
 def _fingerprint(*parts: object) -> str:
@@ -330,6 +340,7 @@ class ViewBuilder:
         cfg, cal = self.cfg, self.cal
         day = cal.logical_day(now)
         rows: list[ChildRow] = []
+        accounts = {u.username: u for u in db.scalars(select(User))}
         for child_id, child in cfg.children.items():
             summary = allowance_summary(db, cfg, cal, child_id, now)
             sessions = [
@@ -362,6 +373,12 @@ class ViewBuilder:
             rows.append(
                 ChildRow(
                     child_id=child_id,
+                    username=child.username,
+                    has_password=bool(
+                        child.username in accounts
+                        and accounts[child.username].enabled
+                        and accounts[child.username].password_hash
+                    ),
                     name=child.display_name,
                     remaining_minutes=summary.remaining_minutes,
                     remaining_text=format_duration(summary.remaining_seconds),
@@ -432,13 +449,22 @@ class ViewBuilder:
             grants=list(cfg.parents.allowance_grants_minutes),
             tv_choices=list(cfg.parents.tv_session_choices_minutes),
             allow_until_stopped=cfg.parents.allow_until_stopped,
+            account_lines=self._account_lines(db, now, accounts),
             state_key="",
         )
         view.state_key = _fingerprint(
             [
-                (r.child_id, r.remaining_minutes, r.status, r.sessions, r.override_until)
+                (
+                    r.child_id,
+                    r.remaining_minutes,
+                    r.status,
+                    r.sessions,
+                    r.override_until,
+                    r.has_password,
+                )
                 for r in rows
             ],
+            view.account_lines,
             [(t.device_id, t.users) for t in tv_rows],
             override_rows,
             locked,
@@ -447,6 +473,55 @@ class ViewBuilder:
             view.poll_seconds,
         )
         return view
+
+    def _account_lines(self, db: Session, now: datetime, users: dict[str, User]) -> list[str]:
+        """ "Last parent sign-in" (D9 compensating control) and the last day's password changes."""
+
+        def name(username: str) -> str:
+            user = users.get(username)
+            if user is not None and user.child_id in self.cfg.children:
+                return self.cfg.children[user.child_id].display_name
+            return (user.display_name if user else None) or username
+
+        def where(ip: str) -> str:
+            for dev in self.cfg.devices.values():
+                if dev.ip == ip:
+                    return f"{dev.display_name} ({ip})"
+            return ip
+
+        lines: list[str] = []
+        parents = [u for u, row in users.items() if row.role == TYPE_PARENT]
+        login = db.scalars(
+            select(AuditEvent)
+            .where(
+                AuditEvent.event_type == "login",
+                AuditEvent.result == "ok",
+                AuditEvent.actor.in_(parents),
+            )
+            .order_by(AuditEvent.id.desc())
+            .limit(1)
+        ).first()
+        if login is not None:
+            ip = str(json.loads(login.details_json).get("ip", "unknown address"))
+            when = self.cal.format_local(login.timestamp, "%a %H:%M")
+            lines.append(f"Last parent sign-in: {name(login.actor)}, {when}, {where(ip)}")
+        changes = db.scalars(
+            select(AuditEvent)
+            .where(
+                AuditEvent.event_type.in_(("password_changed", "password_reset")),
+                AuditEvent.result == "ok",
+                AuditEvent.timestamp > now - _RECENT_ACCOUNT_EVENTS,
+            )
+            .order_by(AuditEvent.id.desc())
+            .limit(3)
+        ).all()
+        for event in changes:
+            when = self.cal.format_local(event.timestamp, "%a %H:%M")
+            if event.event_type == "password_changed":
+                lines.append(f"{name(event.subject)} changed their password, {when}")
+            else:
+                lines.append(f"{name(event.actor)} set {name(event.subject)}'s password, {when}")
+        return lines
 
 
 __all__ = ["TYPE_CHILD", "ActiveView", "ChildView", "ParentView", "ViewBuilder"]
