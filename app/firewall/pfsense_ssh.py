@@ -1,5 +1,9 @@
 """Production adapter: drives pfSense through the root-owned ``screenctl`` wrapper over SSH.
 
+Superseded by the pull model (v1.2 plan PULL-06 removes it). ``publish`` converges the
+active table with the wrapper's fixed operations so the adapter meets the declarative
+contract until then.
+
 This is the only place the system OpenSSH client is invoked. Operation names are drawn
 from a fixed set and every address is validated before it reaches the command line, so
 no caller-supplied text is ever interpreted by a remote shell.
@@ -15,7 +19,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import FirewallCfg
-from app.firewall.base import FirewallError, FirewallHealth, validate_ip
+from app.firewall.base import (
+    AppliedState,
+    DesiredState,
+    FirewallError,
+    FirewallHealth,
+    GenerationSource,
+    MemoryGenerations,
+    validate_ip,
+)
 
 log = logging.getLogger("screentime.firewall")
 
@@ -66,9 +78,16 @@ _MAX_CONTROL_DIR_LENGTH = 104 - 1 - len("/") - 40 - 17
 
 class PfSenseSshFirewallAdapter:
     def __init__(
-        self, cfg: FirewallCfg, runner: Runner | None = None, control_dir: Path | None = None
+        self,
+        cfg: FirewallCfg,
+        runner: Runner | None = None,
+        control_dir: Path | None = None,
+        generations: GenerationSource | None = None,
     ) -> None:
         self._cfg = cfg
+        self._generations: GenerationSource = generations or MemoryGenerations()
+        self._applied: AppliedState | None = None
+        self._pending_kills: set[str] = set()
         self._runner: Runner = runner or subprocess_runner
         self._control_dir = control_dir if cfg.ssh_multiplex else None
         if self._control_dir is not None and len(str(self._control_dir)) > _MAX_CONTROL_DIR_LENGTH:
@@ -161,6 +180,26 @@ class PfSenseSshFirewallAdapter:
         elapsed = int((loop.time() - started) * 1000)
         ok = out.strip().startswith("ok")
         return FirewallHealth(ok=ok, detail=out.strip()[:200], latency_ms=elapsed)
+
+    async def publish(self, desired: DesiredState) -> int:
+        """Revocations first (the safety-critical direction), then state kills, then grants."""
+        generation = self._generations.next(desired.device_ids)
+        wanted = {validate_ip(ip) for ip in desired.ips}
+        current = await self.get_active_ips()
+        for ip in sorted(current - wanted):
+            await self.remove_active_ip(ip)
+            self._pending_kills.add(ip)
+        self._pending_kills -= wanted
+        for ip in sorted(self._pending_kills):
+            await self.kill_states(ip)
+            self._pending_kills.discard(ip)
+        for ip in sorted(wanted - current):
+            await self.add_active_ip(ip)
+        self._applied = AppliedState(generation, "normal", desired.device_ids)
+        return generation
+
+    async def applied(self) -> AppliedState | None:
+        return self._applied
 
     async def get_active_ips(self) -> set[str]:
         out = await self._run("show-active")

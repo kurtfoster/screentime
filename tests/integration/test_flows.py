@@ -45,7 +45,8 @@ def test_child_requests_30_min_with_plenty_left(app_env: AppEnv, child8: Session
     body = resp.json()
     assert body["ok"] and body["sessions"][0]["reserved_minutes"] == 30
     assert app_env.firewall.active == {IPAD}
-    assert app_env.firewall.ops() == [("add_active_ip", IPAD)]
+    assert app_env.firewall.ops() == [("apply", IPAD)]
+    assert app_env.firewall.leases == {"ipad": 900}  # capped at firewall.max_lease_seconds
     assert "30:00" in child8.get("/child").text or "29:5" in child8.get("/child").text
 
 
@@ -56,8 +57,8 @@ def test_child_stops_after_ten_minutes(app_env: AppEnv, child8: Session) -> None
     resp = child8.post(f"/api/child/session/{sid}/stop")
     assert resp.status_code == 200 and resp.json()["ok"]
     assert app_env.firewall.active == set()
-    # Revocation removes the address and then kills existing states.
-    assert app_env.firewall.ops() == [("remove_active_ip", IPAD), ("kill_states", IPAD)]
+    # The firewall applies the new (empty) set and kills the iPad's existing connections.
+    assert app_env.firewall.ops() == [("apply",), ("kill_states", IPAD)]
     page = child8.get("/child").text
     assert "1h 50m" in page
 
@@ -171,7 +172,7 @@ def test_education_traffic_does_not_need_a_session(app_env: AppEnv) -> None:
 
 
 def test_firewall_failure_means_no_grant_and_no_charge(app_env: AppEnv, child8: Session) -> None:
-    app_env.firewall.fail_ops = {"add_active_ip"}
+    app_env.firewall.fail_ops = {"publish"}
     resp = start(child8, "ipad", 30)
     assert resp.status_code == 503 and resp.json()["reason"] == "ENFORCEMENT_FAILED"
     assert app_env.firewall.active == set()
@@ -207,12 +208,12 @@ def test_new_starts_are_rejected_while_enforcement_is_degraded_then_recover(
 def test_revocation_failure_keeps_accounting_and_retries(app_env: AppEnv, child8: Session) -> None:
     sid = start(child8, "ipad", 30).json()["sessions"][0]["id"]
     app_env.clock.advance(minutes=5)
-    app_env.firewall.fail_ops = {"remove_active_ip"}
+    app_env.firewall.fail_ops = {"publish"}
     assert child8.post(f"/api/child/session/{sid}/stop").status_code == 200  # DB is authoritative
     assert sessions(app_env)[0].status == "completed"
     assert app_env.firewall.active == {IPAD}  # pf still open; will be corrected
     app_env.firewall.fail_ops = set()
-    app_env.reconcile()
+    app_env.publish()
     assert app_env.firewall.active == set()
     assert ("kill_states", IPAD) in app_env.firewall.ops()
 
@@ -223,13 +224,13 @@ def test_revocation_failure_keeps_accounting_and_retries(app_env: AppEnv, child8
 def test_reconcile_heals_a_pf_filter_reload(app_env: AppEnv, child8: Session) -> None:
     start(child8, "ipad")
     app_env.firewall.wipe()
-    result = app_env.reconcile()
-    assert result.added == {IPAD} and app_env.firewall.active == {IPAD}
+    result = app_env.publish()
+    assert result.desired.ips == {IPAD} and app_env.firewall.active == {IPAD}
 
 
 def test_reconcile_removes_unknown_entries(app_env: AppEnv) -> None:
     app_env.firewall.active = {"192.168.12.99"}
-    app_env.reconcile()
+    app_env.publish()
     assert app_env.firewall.active == set()
     assert ("kill_states", "192.168.12.99") in app_env.firewall.ops()
 
@@ -237,8 +238,8 @@ def test_reconcile_removes_unknown_entries(app_env: AppEnv) -> None:
 def test_reconcile_is_idempotent(app_env: AppEnv, child8: Session) -> None:
     start(child8, "ipad")
     app_env.firewall.clear_calls()
-    app_env.reconcile()
-    app_env.reconcile()
+    app_env.publish()
+    app_env.publish()
     assert app_env.firewall.ops() == []
 
 
@@ -400,7 +401,7 @@ def test_parent_tv_start_validates_input(parent: Session) -> None:
 
 
 def test_tv_start_failure_is_reported_and_refunded(app_env: AppEnv, parent: Session) -> None:
-    app_env.firewall.fail_ops = {"add_active_ip"}
+    app_env.firewall.fail_ops = {"publish"}
     resp = parent.post("/api/parent/tv/kids_tv/start", {"minutes": 30})
     assert resp.status_code == 503
     assert sessions(app_env)[0].status == SESSION_ENFORCEMENT_FAILED
@@ -501,7 +502,8 @@ def test_diagnostics_page_shows_required_fields(
         "Last pfSense contact",
         "Desired",
         IPAD,
-        "Actual",
+        "Applied",
+        "Generation",
         "Last refresh",
         "Unresolved hostnames",
         "www.duolingo.com",

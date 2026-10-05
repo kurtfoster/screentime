@@ -1,8 +1,7 @@
 """In-process asyncio scheduler (spec section 17). No Redis, no Celery.
 
-Three independent loops: the timer tick (expiry, warnings, cutoffs), the firewall
-reconcile loop (also heals a pf filter reload that wiped table edits), and the
-education DNS refresh. A failure in one iteration is logged and never stops the loop.
+Independent loops: the timer tick (expiry, warnings, cutoffs), firewall publication
+(leases are renewed and health is re-checked), and the education DNS refresh. A failure in one iteration is logged and never stops the loop.
 """
 
 from __future__ import annotations
@@ -79,11 +78,11 @@ class Scheduler:
             intended = started + delay  # tick start to tick start, so slow work counts as lag
             await asyncio.sleep(delay)
 
-    async def _reconcile(self) -> None:
+    async def _publish(self) -> None:
         try:
-            await self._orch.enforcement.reconcile()
+            await self._orch.enforcement.publish()
         except Exception as exc:  # already logged loudly by the enforcement service
-            log.debug("periodic reconcile failed: %s", exc)
+            log.debug("periodic publish failed: %s", exc)
 
     async def _housekeeping(self) -> None:
         if self._maintenance is not None:
@@ -100,8 +99,8 @@ class Scheduler:
         loops = [
             ("tick", lambda: self._orch.tick(), lambda: self._tick_seconds),
             (
-                "reconcile",
-                self._reconcile,
+                "publish",
+                self._publish,
                 lambda: self._reconcile_seconds or float(fw.reconcile_seconds),
             ),
             ("education", self._resolver.refresh, self._resolver.next_interval_seconds),

@@ -25,6 +25,7 @@ from app.enforcement import EnforcementService
 from app.firewall.audited import AuditedFirewall
 from app.firewall.base import FirewallAdapter
 from app.firewall.dry_run import DryRunFirewallAdapter
+from app.firewall.generations import DbGenerations
 from app.firewall.pfsense_ssh import PfSenseSshFirewallAdapter
 from app.firewall.resolver import DnsClient, EducationResolver
 from app.models import FirewallEvent, WebSession
@@ -98,12 +99,15 @@ def build_context(
     secret = load_or_create_secret(config.storage.data_dir / "secret.key")
 
     if adapter is None:
+        generations = DbGenerations(db)
         adapter = (
             PfSenseSshFirewallAdapter(
-                config.firewall, control_dir=config.storage.data_dir / "ssh-mux"
+                config.firewall,
+                control_dir=config.storage.data_dir / "ssh-mux",
+                generations=generations,
             )
             if config.firewall.mode == "pfsense_ssh"
-            else DryRunFirewallAdapter()
+            else DryRunFirewallAdapter(generations)
         )
     firewall = AuditedFirewall(adapter, db, clock, config.firewall.mode)
 
@@ -124,7 +128,7 @@ def build_context(
 
     policy = PolicyEngine(config, calendar)
     sessions = SessionService(db, config, calendar, clock)
-    enforcement = EnforcementService(db, config, clock, firewall, clock_sync)
+    enforcement = EnforcementService(db, config, clock, calendar, firewall, clock_sync)
     if dns is None:
         from app.firewall.resolver import DnsPythonClient
 

@@ -171,6 +171,10 @@ class FirewallCfg(_Strict):
     active_table: str = "SCR_ACTIVE"
     education_table: str = "SCR_EDU_ALLOW"
     reconcile_seconds: int = Field(default=30, ge=5, le=3600)
+    # Longest lease the firewall is given (plan 6.3). The firewall renews leases on every poll,
+    # so this must cover at least three polls; it bounds how long a device stays on if this
+    # controller stops answering (until the fail-open grace runs out).
+    max_lease_seconds: int = Field(default=900, ge=180, le=3600)
     education_dns_refresh_seconds: int = Field(default=300, ge=30, le=86400)
     include_ipv6_in_education: bool = True
 

@@ -86,7 +86,8 @@ def test_unlock_and_reconcile(app_env: AppEnv) -> None:
     assert "was not locked" in run(app_env, "unlock", "child8")[1]
     app_env.firewall.active = {"192.168.12.98"}
     code, text = run(app_env, "reconcile", "--education")
-    assert code == 0 and "removed=['192.168.12.98']" in text
+    assert code == 0 and "published generation" in text and "no devices" in text
+    assert app_env.firewall.active == set()  # the stray address was removed
     app_env.firewall.fail_all = True
     assert run(app_env, "reconcile")[0] == 1
 

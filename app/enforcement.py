@@ -1,8 +1,9 @@
-"""Idempotent reconciliation of pf's active table with the database (spec sections 12-13).
+"""Publication of the desired firewall state (spec sections 12-13, v1.2 plan 6).
 
-The database decides what *should* be enabled; this service makes the firewall match.
-Revocations run first (the safety-critical direction), then state kills, then grants.
-Any firewall failure flips the enforcement-degraded flag, which blocks new child starts.
+The database decides which devices should be on; this service turns that into a
+:class:`DesiredState` (devices with leases) and publishes it. The firewall applies the whole
+state at once, revokes devices that left it and kills their connections, then acknowledges.
+A publication failure flips the enforcement-degraded flag, which blocks new child starts.
 """
 
 from __future__ import annotations
@@ -10,29 +11,27 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.clock import AssumeSynchronised, Clock, ClockSync
+from app.clock import AssumeSynchronised, Clock, ClockSync, LogicalCalendar
 from app.config import AppConfig
 from app.db import Database
 from app.firewall.audited import AuditedFirewall
-from app.firewall.base import FirewallError
+from app.firewall.base import AppliedState, DesiredState, FirewallError
 from app.models import NotificationEvent
 from app.runtime import run_sync
-from app.state import desired_active_ips
+from app.state import desired_leases
 
 log = logging.getLogger("screentime.firewall")
 
 
-@dataclass
-class ReconcileResult:
-    desired: set[str]
-    added: set[str] = field(default_factory=set)
-    removed: set[str] = field(default_factory=set)
-    killed: set[str] = field(default_factory=set)
+@dataclass(frozen=True)
+class PublishResult:
+    generation: int
+    desired: DesiredState
 
 
 class EnforcementService:
@@ -41,6 +40,7 @@ class EnforcementService:
         db: Database,
         config: AppConfig,
         clock: Clock,
+        calendar: LogicalCalendar,
         firewall: AuditedFirewall,
         clock_sync: ClockSync | None = None,
     ) -> None:
@@ -49,16 +49,28 @@ class EnforcementService:
         self._last_sync_state: bool | None = None
         self._cfg = config
         self._clock = clock
+        self._cal = calendar
         self.firewall = firewall
         self._lock = asyncio.Lock()
-        self._pending_kills: set[str] = set()
         self.degraded = False
         self.degraded_since: datetime | None = None
-        self.last_reconcile_at: datetime | None = None
+        self.last_publish_at: datetime | None = None
         self.last_success_at: datetime | None = None
         self.last_error: str | None = None
-        self.desired: set[str] = set()
-        self.actual: set[str] | None = None
+        self.desired_state = DesiredState()
+        self.applied_state: AppliedState | None = None
+
+    @property
+    def desired(self) -> set[str]:
+        """Addresses that should be on (diagnostics)."""
+        return set(self.desired_state.ips)
+
+    @property
+    def actual(self) -> set[str] | None:
+        """Addresses the firewall last acknowledged, or None before any acknowledgement."""
+        if self.applied_state is None:
+            return None
+        return self.ips_for_devices(self.applied_state.device_ids)
 
     def clock_synchronised(self) -> bool:
         """Whether the system clock can be trusted; logs each change of state once."""
@@ -77,43 +89,32 @@ class EnforcementService:
     def ips_for_devices(self, device_ids: Iterable[str]) -> set[str]:
         return {self._cfg.devices[d].ip for d in device_ids if d in self._cfg.devices}
 
-    async def reconcile(self, kill_ips: Iterable[str] = ()) -> ReconcileResult:
-        """Converge pf on the desired set. Raises :class:`FirewallError` if that cannot be done."""
+    async def publish(self) -> PublishResult:
+        """Publish the desired state now. Raises :class:`FirewallError` if that cannot be done."""
         async with self._lock:
             now = self._clock.now()
-            self.last_reconcile_at = now
+            self.last_publish_at = now
             # With an untrusted clock, sessions that really ended can look current, so grant
             # nothing at all (fail closed) until the clock is synchronised.
             desired = (
-                await run_sync(self._read_desired, now) if self.clock_synchronised() else set()
+                await run_sync(self._read_desired, now)
+                if self.clock_synchronised()
+                else DesiredState()
             )
-            self.desired = desired
-            self._pending_kills |= set(kill_ips)
-            result = ReconcileResult(desired=desired)
+            self.desired_state = desired
             try:
-                current = await self.firewall.get_active_ips()
-                for ip in sorted(current - desired):
-                    await self.firewall.remove_active_ip(ip)
-                    result.removed.add(ip)
-                    self._pending_kills.add(ip)
-                self._pending_kills -= desired
-                for ip in sorted(self._pending_kills):
-                    await self.firewall.kill_states(ip)
-                    result.killed.add(ip)
-                    self._pending_kills.discard(ip)
-                for ip in sorted(desired - current):
-                    await self.firewall.add_active_ip(ip)
-                    result.added.add(ip)
+                generation = await self.firewall.publish(desired)
             except FirewallError as exc:
                 await self._mark_degraded(str(exc), now)
                 raise
-            self.actual = set(desired)
+            self.applied_state = await self.firewall.applied()
             await self._mark_healthy(now)
-            return result
+            return PublishResult(generation, desired)
 
-    def _read_desired(self, now: datetime) -> set[str]:
+    def _read_desired(self, now: datetime) -> DesiredState:
+        next_reset = self._cal.day_start(self._cal.logical_day(now) + timedelta(days=1))
         with self._db.session() as session:
-            return desired_active_ips(session, now)
+            return desired_leases(session, now, next_reset, self._cfg.firewall.max_lease_seconds)
 
     async def _mark_degraded(self, error: str, now: datetime) -> None:
         self.last_error = error

@@ -75,8 +75,8 @@ class AppEnv:
     def tick(self) -> Any:
         return self.call(self.ctx.orchestrator.tick)
 
-    def reconcile(self) -> Any:
-        return self.call(self.ctx.enforcement.reconcile)
+    def publish(self) -> Any:
+        return self.call(self.ctx.enforcement.publish)
 
     def set(self, hour: int, minute: int = 0, **kw: Any) -> None:
         self.clock.set(at(hour, minute, **kw))

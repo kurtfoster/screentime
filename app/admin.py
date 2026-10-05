@@ -197,7 +197,7 @@ def cmd_end_all(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     async def run() -> CommandResult:
         res = await asyncio.to_thread(ctx.sessions.end_all_sessions, "admin-cli")
         if args.reconcile:
-            await ctx.orchestrator._reconcile_quietly(res.ended_device_ids)
+            await ctx.orchestrator._publish_quietly()
         return res
 
     return _report(asyncio.run(run()), out, "ended every active session")
@@ -215,7 +215,7 @@ def cmd_enable_device(ctx: AppContext, args: argparse.Namespace, out: Out) -> in
             ctx.sessions.enable_device, args.device, args.minutes, "admin-cli"
         )
         if res.ok and args.reconcile:
-            await ctx.orchestrator._reconcile_quietly()
+            await ctx.orchestrator._publish_quietly()
         return res
 
     return _report(asyncio.run(run()), out, f"{args.device} forced on for {args.minutes} minutes")
@@ -296,14 +296,12 @@ def cmd_user_enable(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
 def cmd_reconcile(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     async def run() -> int:
         try:
-            result = await ctx.enforcement.reconcile()
+            result = await ctx.enforcement.publish()
         except Exception as exc:
-            out(f"RECONCILE FAILED: {exc}")
+            out(f"PUBLISH FAILED: {exc}")
             return 1
-        out(
-            f"desired={sorted(result.desired)} added={sorted(result.added)} "
-            f"removed={sorted(result.removed)} killed={sorted(result.killed)}"
-        )
+        leases = ", ".join(f"{x.device_id}={x.seconds}s" for x in result.desired.leases)
+        out(f"published generation {result.generation}: {leases or 'no devices'}")
         if args.education:
             pushed = await ctx.resolver.refresh()
             out(
@@ -378,7 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
         p = user.add_parser(name, help=text)
         p.add_argument("username")
         p.set_defaults(func=cmd_user_enable, enable=enable)
-    p = sub.add_parser("reconcile", help="converge pfSense on the database now")
+    p = sub.add_parser("reconcile", help="publish the desired firewall state now")
     p.add_argument("--education", action="store_true", help="also refresh the education allowlist")
     p.set_defaults(func=cmd_reconcile)
     return parser

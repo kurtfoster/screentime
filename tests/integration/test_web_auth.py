@@ -198,7 +198,7 @@ def test_health_endpoints_are_local_only(app_env: AppEnv) -> None:
 def test_ready_reports_degraded_firewall(app_env: AppEnv) -> None:
     app_env.firewall.fail_all = True
     with contextlib.suppress(Exception):
-        app_env.reconcile()
+        app_env.publish()
     resp = app_env.client.get("/health/ready")
     assert resp.status_code == 503 and resp.json()["firewall"] == "degraded"
 

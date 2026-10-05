@@ -29,11 +29,11 @@
   </section>
 
   <section class="card stack">
-    <h2>Active table (SCR_ACTIVE)</h2>
+    <h2>Desired and applied</h2>
     <table>
+      <tr><th>Generation</th><td class="mono">{{ generation if generation is not none else "not yet published" }}</td></tr>
       <tr><th>Desired</th><td class="mono">{{ desired | join(", ") or "none" }}</td></tr>
-      <tr><th>Actual</th><td class="mono">{% if actual is none %}not yet reconciled{% else %}{{ actual | join(", ") or "none" }}{% endif %}</td></tr>
-      <tr><th>Pending state kills</th><td class="mono">{{ pending_kills | join(", ") or "none" }}</td></tr>
+      <tr><th>Applied</th><td class="mono">{% if actual is none %}not yet acknowledged{% else %}{{ actual | join(", ") or "none" }}{% endif %}</td></tr>
     </table>
   </section>
 

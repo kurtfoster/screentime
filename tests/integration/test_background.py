@@ -33,36 +33,49 @@ def subscribe(session: Session, **override) -> None:  # type: ignore[no-untyped-
 # --- enforcement ---------------------------------------------------------------------------
 
 
-def test_failed_state_kill_is_retried_until_it_succeeds(app_env: AppEnv, child8: Session) -> None:
+def test_failed_publication_after_a_stop_is_retried(app_env: AppEnv, child8: Session) -> None:
+    """The firewall kills a device's connections itself when it leaves the published set."""
     sid = child8.post("/api/child/session/start", {"device_id": "ipad", "minutes": 30}).json()[
         "sessions"
     ][0]["id"]
-    app_env.firewall.fail_ops = {"kill_states"}
+    app_env.firewall.fail_ops = {"publish"}
     child8.post(f"/api/child/session/{sid}/stop")
-    assert app_env.firewall.active == set()  # address removed...
-    assert app_env.ctx.enforcement.degraded  # ...but the kill failed, so we are degraded
+    assert app_env.firewall.active == {IPAD}  # not yet published...
+    assert app_env.ctx.enforcement.degraded  # ...so we are degraded
     app_env.firewall.fail_ops = set()
     app_env.firewall.clear_calls()
-    app_env.reconcile()
-    assert ("kill_states", IPAD) in app_env.firewall.ops()  # ...and retried on the next pass
+    app_env.publish()
+    assert app_env.firewall.ops() == [("apply",), ("kill_states", IPAD)]  # retried next pass
     assert not app_env.ctx.enforcement.degraded
     app_env.firewall.clear_calls()
-    app_env.reconcile()
-    assert ("kill_states", IPAD) not in app_env.firewall.ops()  # only once
+    app_env.publish()
+    assert app_env.firewall.ops() == []  # only once
 
 
-def test_revocations_run_before_grants(app_env: AppEnv, child8: Session) -> None:
-    app_env.firewall.active = {"192.168.12.99"}
-    child8.post("/api/child/session/start", {"device_id": "ipad", "minutes": 15})
-    ops = [c[0] for c in app_env.firewall.ops()]
-    assert ops.index("remove_active_ip") < ops.index("add_active_ip")
+def test_generation_changes_only_with_the_set(app_env: AppEnv) -> None:
+    assert app_env.publish().generation == 1  # nothing on yet: the first published set
+    assert app_env.publish().generation == 1
+    app_env.call(app_env.ctx.orchestrator.start_child_session, "child8", "ipad", 30)
+    started = app_env.publish()
+    assert started.generation == 2 and started.desired.device_ids == {"ipad"}
+
+
+def test_the_stored_generation_survives_a_restart(app_env: AppEnv) -> None:
+    from app.firewall.generations import DbGenerations
+
+    first = DbGenerations(app_env.ctx.db)
+    assert first.next(frozenset()) == 1 and first.next(frozenset()) == 1
+    assert first.next(frozenset({"ipad"})) == 2
+    restarted = DbGenerations(app_env.ctx.db)  # a new process reads the stored counter
+    assert restarted.next(frozenset({"ipad"})) == 2
+    assert restarted.next(frozenset()) == 3  # never goes backwards
 
 
 def test_parents_are_told_once_per_outage(app_env: AppEnv) -> None:
     app_env.firewall.fail_all = True
     for _ in range(3):
         with pytest.raises(Exception):  # noqa: B017
-            app_env.reconcile()
+            app_env.publish()
     with app_env.ctx.db.session() as db:
         events = db.scalars(
             select(NotificationEvent).where(NotificationEvent.kind == "enforcement_failure")
@@ -71,7 +84,7 @@ def test_parents_are_told_once_per_outage(app_env: AppEnv) -> None:
     status = app_env.ctx.enforcement
     assert status.degraded and status.last_error and status.degraded_since is not None
     app_env.firewall.fail_all = False
-    app_env.reconcile()
+    app_env.publish()
     assert not status.degraded and status.last_success_at is not None
 
 
@@ -165,9 +178,9 @@ def test_enforcement_failure_alerts_parents(app_env: AppEnv, parent: Session) ->
     subscribe(parent)
     app_env.firewall.fail_all = True
     with pytest.raises(Exception):  # noqa: B017
-        app_env.reconcile()
+        app_env.publish()
     app_env.firewall.fail_all = False
-    assert app_env.reconcile() is not None
+    assert app_env.publish() is not None
     app_env.tick()
     assert [s[1]["kind"] for s in app_env.push.sent] == [
         "enforcement_failure",
@@ -226,11 +239,11 @@ def test_push_can_be_disabled(env_factory, user_hashes) -> None:  # type: ignore
 
 
 def test_scheduler_runs_ticks_and_survives_failures(app_env: AppEnv) -> None:
-    calls = {"tick": 0, "reconcile": 0, "refresh": 0, "housekeeping": 0}
+    calls = {"tick": 0, "publish": 0, "refresh": 0, "housekeeping": 0}
 
     class Enforcement:
-        async def reconcile(self) -> None:
-            calls["reconcile"] += 1
+        async def publish(self) -> None:
+            calls["publish"] += 1
             raise RuntimeError("pfSense unreachable")
 
     class Orch:
@@ -269,7 +282,7 @@ def test_scheduler_runs_ticks_and_survives_failures(app_env: AppEnv) -> None:
         assert calls == stopped  # nothing runs after stop()
 
     asyncio.run(scenario())
-    assert calls["tick"] >= 3 and calls["reconcile"] >= 3 and calls["refresh"] >= 3
+    assert calls["tick"] >= 3 and calls["publish"] >= 3 and calls["refresh"] >= 3
     assert calls["housekeeping"] == 1
 
 
@@ -358,7 +371,7 @@ def test_migrations_tolerate_a_restored_database_from_a_previous_release(tmp_pat
     restored = Database(tmp_path / "old.db")
     upgrade_to_head(restored.url)
     upgrade_to_head(restored.url)  # idempotent
-    assert current_revision(restored) == "0002"
+    assert current_revision(restored) == "0003"
     with restored.session() as s:
         assert s.execute(text("SELECT count(*) FROM audit_events")).scalar_one() == 1
         # 0002: an existing account gains an empty hash, i.e. "no password set".

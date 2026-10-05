@@ -35,7 +35,7 @@ def test_unsynchronised_clock_fails_closed_then_recovers(
     assert env.firewall.active == {IPAD}
 
     sync.synced = False  # e.g. the Pi rebooted after a power cut and NTP is not reachable
-    env.reconcile()
+    env.publish()
     assert env.firewall.active == set()  # every grant withdrawn, including running sessions
     refused = start(child12, "iphone_child12")
     assert refused.status_code == 503  # type: ignore[attr-defined]
@@ -49,7 +49,7 @@ def test_unsynchronised_clock_fails_closed_then_recovers(
     assert "clock is not synchronised yet" in parent.get("/parent").text
 
     sync.synced = True
-    env.reconcile()
+    env.publish()
     assert env.firewall.active == {IPAD}  # the session that was still running is restored
     assert start(child12, "iphone_child12").json()["ok"]  # type: ignore[attr-defined]
     assert env.firewall.active == {IPAD, IPHONE}
@@ -63,7 +63,7 @@ def test_startup_with_an_unsynchronised_clock_grants_nothing(
 ) -> None:
     env = env_factory(clock_sync=ManualSync(False))
     env.firewall.active.add(IPAD)  # left in pf by the previous run
-    env.reconcile()
+    env.publish()
     assert env.firewall.active == set()
 
 

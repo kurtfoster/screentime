@@ -175,6 +175,18 @@ class FirewallEvent(Base):
     error_text: Mapped[str] = mapped_column(Text, default="")
 
 
+class FirewallAck(Base):
+    """An acknowledgement from the firewall: which generation it applied, how, and to whom."""
+
+    __tablename__ = "firewall_acks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    generation: Mapped[int] = mapped_column(Integer)
+    mode: Mapped[str] = mapped_column(String(16))
+    device_ids: Mapped[str] = mapped_column(Text, default="")  # comma-separated device ids
+
+
 class AuditEvent(Base):
     """Append-only record of who did what and how it went."""
 

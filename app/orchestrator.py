@@ -1,12 +1,13 @@
-"""Async façade tying session commands to firewall reconciliation.
+"""Async façade tying session commands to firewall publication.
 
 Rules enforced here (spec sections 3, 13, 18):
 
-* Fail closed: a child start only succeeds once the firewall has actually granted
-  access. If it cannot, the session is marked ``enforcement_failed`` and refunded.
-* Commit first, then reconcile. The database is authoritative; pf follows.
-* Revocations (stop, expiry, End-for-Today) reconcile *and* kill states, but a failure
-  there never undoes the accounting; the reconcile loop keeps retrying.
+* Fail closed: a child start only succeeds once the desired state has been published. If
+  it cannot be, the session is marked ``enforcement_failed`` and refunded.
+* Commit first, then publish. The database is authoritative; the firewall follows, and it
+  kills the connections of devices that leave the published set.
+* A failed publication after a revocation (stop, expiry, End-for-Today) never undoes the
+  accounting; the publish loop keeps retrying.
 """
 
 from __future__ import annotations
@@ -47,22 +48,21 @@ class Orchestrator:
 
     # -- helpers ----------------------------------------------------------------------
 
-    async def _reconcile_quietly(self, ended_device_ids: set[str] | None = None) -> bool:
-        kills = self.enforcement.ips_for_devices(ended_device_ids or ())
+    async def _publish_quietly(self) -> bool:
         try:
-            await self.enforcement.reconcile(kill_ips=kills)
+            await self.enforcement.publish()
         except FirewallError:
             return False
         return True
 
     async def _grant_or_refund(self, res: CommandResult) -> CommandResult:
-        """Reconcile after a start; on failure refund the new sessions and report honestly."""
+        """Publish after a start; on failure refund the new sessions and report honestly."""
         try:
-            await self.enforcement.reconcile()
+            await self.enforcement.publish()
         except FirewallError as exc:
             ids = [s.id for s in res.sessions]
             await run_sync(self.sessions.mark_enforcement_failed, ids, str(exc))
-            await self._reconcile_quietly()
+            await self._publish_quietly()
             return CommandResult.fail(
                 Reason.ENFORCEMENT_FAILED,
                 "The Internet could not be switched on. You have not been charged. "
@@ -73,7 +73,7 @@ class Orchestrator:
     async def _degraded_gate(self, actor: str) -> CommandResult | None:
         if not self.enforcement.degraded:
             return None
-        await self._reconcile_quietly()  # one quick attempt to recover before refusing
+        await self._publish_quietly()  # one quick attempt to recover before refusing
         if not self.enforcement.degraded:
             return None
         await run_sync(self._audit_denied, actor, "session_rejected", Reason.ENFORCEMENT_DEGRADED)
@@ -132,7 +132,7 @@ class Orchestrator:
             )
         )
         if res.ok and not res.duplicate:
-            await self._reconcile_quietly(res.ended_device_ids)
+            await self._publish_quietly()
         return res
 
     async def extend_session(
@@ -161,7 +161,7 @@ class Orchestrator:
     async def end_today(self, child_id: str, actor: str) -> CommandResult:
         res = await run_sync(lambda: self.sessions.end_today(child_id, actor))
         if res.ok:
-            await self._reconcile_quietly(res.ended_device_ids)
+            await self._publish_quietly()
         return res
 
     async def clear_day_lock(self, child_id: str, actor: str) -> CommandResult:
@@ -182,7 +182,7 @@ class Orchestrator:
     async def revoke_override(self, override_id: int, actor: str) -> CommandResult:
         res = await run_sync(lambda: self.sessions.revoke_override(override_id, actor))
         if res.ok:
-            await self._reconcile_quietly(res.ended_device_ids)
+            await self._publish_quietly()
         return res
 
     # -- background -------------------------------------------------------------------
@@ -191,7 +191,7 @@ class Orchestrator:
         """One timer pass: expire, warn, revoke, notify. Never raises on firewall trouble."""
         result = await run_sync(lambda: self.sessions.tick(now))
         if result.changed:
-            await self._reconcile_quietly(result.ended_device_ids)
+            await self._publish_quietly()
         try:
             await self.notifier.dispatch_pending()
         except Exception:
@@ -199,6 +199,6 @@ class Orchestrator:
         return result
 
     async def startup(self) -> None:
-        """Catch up everything that expired while down, then reconcile pf (spec 13.3)."""
+        """Catch up everything that expired while down, then publish (spec 13.3)."""
         await self.tick()
-        await self._reconcile_quietly()
+        await self._publish_quietly()

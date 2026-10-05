@@ -100,7 +100,7 @@ async def diagnostics(request: Request, principal: Principal = Depends(parent_pa
         "last_contact": ctx.firewall.last_success_at,
         "desired": sorted(enforcement.desired),
         "actual": sorted(enforcement.actual) if enforcement.actual is not None else None,
-        "pending_kills": sorted(getattr(enforcement, "_pending_kills", set())),
+        "generation": ctx.firewall.last_generation,
         "resolver": resolver,
         "hosts": sorted(resolver.hosts.values(), key=lambda h: (h.service, h.host)),
         "unresolved": resolver.unresolved(),

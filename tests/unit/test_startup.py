@@ -41,7 +41,7 @@ print(json.dumps({{"code": code, "heavy": [m for m in {HEAVY!r} if m in sys.modu
 
 
 def test_script_heads_are_read_without_alembic(tmp_path: Path) -> None:
-    assert script_heads() == {"0002"}
+    assert script_heads() == {"0003"}
     (tmp_path / "a.py").write_text("revision = '0001'\ndown_revision = None\n")
     (tmp_path / "b.py").write_text('revision: str = "0002"\ndown_revision: str | None = "0001"\n')
     assert script_heads(tmp_path) == {"0002"}

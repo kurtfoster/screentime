@@ -15,7 +15,7 @@ from app.models import (
     SessionRecord,
 )
 from app.policy import Reason
-from app.state import allowance_summary, desired_active_ips
+from app.state import allowance_summary, desired_leases
 from tests.conftest import MONDAY, SATURDAY, Env, at, build_env
 
 
@@ -337,8 +337,7 @@ def test_shared_tv_two_participants_charged_independently(env: Env) -> None:
     env.service.stop_session(res.sessions[0].id, actor="child8", role="child", child_id="child8")
     assert summary(env, "child8").charged_seconds == 10 * 60
     assert summary(env, "child12").remaining_minutes == 110  # still running, charged as elapsed
-    with env.db.session() as db:
-        assert desired_active_ips(db, env.clock.now()) == {"192.168.12.40"}
+    assert desired_active_ips_now(env) == {"192.168.12.40"}
 
 
 def test_participant_rejection_names_the_sibling(env: Env) -> None:
@@ -546,9 +545,39 @@ def test_until_stopped_without_reset_has_no_end(tmp_path: Path) -> None:
     assert desired_active_ips_now(env) == {"192.168.12.41"}
 
 
-def desired_active_ips_now(env: Env) -> set[str]:
+def desired_now(env: Env, max_lease: int = 900) -> dict[str, int]:
+    """Device id -> lease seconds, as published to the firewall."""
+    now = env.clock.now()
+    next_reset = env.calendar.day_start(env.calendar.logical_day(now) + timedelta(days=1))
     with env.db.session() as db:
-        return desired_active_ips(db, env.clock.now())
+        state = desired_leases(db, now, next_reset, max_lease)
+    return {lease.device_id: lease.seconds for lease in state.leases}
+
+
+def desired_active_ips_now(env: Env) -> set[str]:
+    return {env.config.devices[d].ip for d in desired_now(env)}
+
+
+def test_leases_run_to_the_planned_end_and_are_capped(env: Env) -> None:
+    env.set(10, 0)
+    start(env, "child8", "ipad", 30)
+    assert desired_now(env) == {"ipad": 900}  # 30 minutes left, capped at max_lease
+    assert desired_now(env, max_lease=3600) == {"ipad": 1800}
+    env.set(10, 25, second=10)
+    assert desired_now(env) == {"ipad": 290}  # 4 min 50 s to the planned end
+
+
+def test_until_stopped_leases_run_to_the_next_day_reset(env: Env) -> None:
+    env.set(1, 59, MONDAY + timedelta(days=1))  # still Monday's logical day: reset at 02:00
+    env.service.start_tv("lounge_tv", None, "parents")
+    assert desired_now(env, max_lease=3600) == {"lounge_tv": 60}
+
+
+def test_the_longest_grant_on_a_device_sets_its_lease(env: Env) -> None:
+    env.set(10, 0)
+    start(env, "child8", "kids_tv", 15)
+    env.service.start_tv("kids_tv", 60, "parents")
+    assert desired_now(env, max_lease=3600) == {"kids_tv": 3600}
 
 
 def test_parent_tv_rejects_personal_devices_and_bad_durations(env: Env) -> None:

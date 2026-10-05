@@ -6,11 +6,17 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import TypeVar
+from typing import Protocol, TypeVar, runtime_checkable
 
 from app.clock import Clock
 from app.db import Database
-from app.firewall.base import FirewallAdapter, FirewallError, FirewallHealth
+from app.firewall.base import (
+    AppliedState,
+    DesiredState,
+    FirewallAdapter,
+    FirewallError,
+    FirewallHealth,
+)
 from app.models import FirewallEvent
 from app.runtime import run_sync
 
@@ -18,8 +24,13 @@ log = logging.getLogger("screentime.firewall")
 T = TypeVar("T")
 
 
+@runtime_checkable
+class EducationTable(Protocol):
+    async def replace_education_ips(self, ips: set[str]) -> None: ...
+
+
 class AuditedFirewall:
-    """Wraps any adapter. Mutating calls are always stored; reads are stored only on failure."""
+    """Wraps any adapter: failures and each new generation are stored as firewall events."""
 
     def __init__(self, inner: FirewallAdapter, db: Database, clock: Clock, mode: str) -> None:
         self.inner = inner
@@ -29,6 +40,7 @@ class AuditedFirewall:
         self.last_success_at: datetime | None = None
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
+        self.last_generation: int | None = None
 
     def _store(self, action: str, target: str, ok: bool, started: float, error: str) -> None:
         elapsed = int((time.monotonic() - started) * 1000)
@@ -75,6 +87,33 @@ class AuditedFirewall:
             await run_sync(self._store, action, target, True, started, "")
         return result
 
+    async def publish(self, desired: DesiredState) -> int:
+        """Publish; stored as a firewall event only when the generation changes (or it fails)."""
+        started = time.monotonic()
+        target = ",".join(sorted(desired.device_ids)) or "(none)"
+        try:
+            generation = await self.inner.publish(desired)
+        except Exception as exc:
+            message = str(exc) or exc.__class__.__name__
+            self.last_error, self.last_error_at = message, self._clock.now()
+            log.error("firewall action=publish target=%s ok=false error=%s", target, message)
+            await run_sync(self._store, "publish", target, False, started, message)
+            if isinstance(exc, FirewallError):
+                raise
+            raise FirewallError(message) from exc
+        self.last_success_at = self._clock.now()
+        self.last_error = None
+        if generation != self.last_generation:
+            self.last_generation = generation
+            log.info("firewall action=publish generation=%d devices=%s", generation, target)
+            await run_sync(
+                self._store, "publish", f"generation {generation}: {target}", True, started, ""
+            )
+        return generation
+
+    async def applied(self) -> AppliedState | None:
+        return await self.inner.applied()
+
     async def health(self) -> FirewallHealth:
         started = time.monotonic()
         result = await self.inner.health()
@@ -86,28 +125,13 @@ class AuditedFirewall:
             await run_sync(self._store, "health", "", False, started, result.detail)
         return result
 
-    async def get_active_ips(self) -> set[str]:
-        return await self._call(
-            "get_active_ips", "", self.inner.get_active_ips, store_success=False
-        )
-
-    async def replace_active_ips(self, ips: set[str]) -> None:
-        await self._call(
-            "replace_active_ips", ",".join(sorted(ips)), lambda: self.inner.replace_active_ips(ips)
-        )
-
-    async def add_active_ip(self, ip: str) -> None:
-        await self._call("add_active_ip", ip, lambda: self.inner.add_active_ip(ip))
-
-    async def remove_active_ip(self, ip: str) -> None:
-        await self._call("remove_active_ip", ip, lambda: self.inner.remove_active_ip(ip))
-
-    async def kill_states(self, ip: str) -> None:
-        await self._call("kill_states", ip, lambda: self.inner.kill_states(ip))
-
     async def replace_education_ips(self, ips: set[str]) -> None:
+        """Transitional: the SSH and dry-run adapters still push the education table."""
+        inner = self.inner
+        if not isinstance(inner, EducationTable):
+            return
         await self._call(
             "replace_education_ips",
             f"{len(ips)} addresses",
-            lambda: self.inner.replace_education_ips(ips),
+            lambda: inner.replace_education_ips(ips),
         )

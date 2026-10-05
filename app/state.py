@@ -6,6 +6,7 @@ every query is keyed to the current logical day.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.clock import LogicalCalendar
 from app.config import AppConfig
+from app.firewall.base import DesiredState, Lease
 from app.models import (
     SESSION_ACTIVE,
     SESSION_ENFORCEMENT_FAILED,
@@ -177,20 +179,30 @@ def load_facts(
     )
 
 
-def desired_active_ips(db: Session, now: datetime) -> set[str]:
-    """IPs that should be in the active table right now (spec section 12).
+def desired_leases(
+    db: Session, now: datetime, next_reset: datetime, max_lease_seconds: int
+) -> DesiredState:
+    """Devices that should be on right now, each with a lease (spec section 12, plan 6.3).
 
-    Sessions past their planned end are excluded even if the timer has not yet closed
-    them, so the firewall converges on the safe answer regardless of timer latency.
+    A lease is the seconds to the latest planned end among the device's grants; "until
+    stopped" grants run to the next logical-day reset. Every lease is capped at
+    ``max_lease_seconds``: the firewall renews it on each poll, so a firewall that stops
+    hearing from this controller switches the device off by itself. Sessions past their
+    planned end are excluded even if the timer has not closed them yet, so the firewall
+    converges on the safe answer regardless of timer latency.
     """
     devices = {d.id: d for d in db.scalars(select(Device)) if d.enabled}
-    ips: set[str] = set()
+    ends: dict[str, datetime] = {}
+
+    def grant(device_id: str, end: datetime | None) -> None:
+        if device_id not in devices:
+            return
+        end = next_reset if end is None else end
+        if end > now and (device_id not in ends or end > ends[device_id]):
+            ends[device_id] = end
+
     for s in db.scalars(select(SessionRecord).where(SessionRecord.status == SESSION_ACTIVE)):
-        if s.planned_end_at is not None and s.planned_end_at <= now:
-            continue
-        device = devices.get(s.device_id)
-        if device is not None:
-            ips.add(device.ip)
+        grant(s.device_id, s.planned_end_at)
     for o in db.scalars(
         select(ParentOverride).where(
             ParentOverride.device_id.is_not(None),
@@ -201,7 +213,14 @@ def desired_active_ips(db: Session, now: datetime) -> set[str]:
             ParentOverride.revoked_at.is_(None),
         )
     ):
-        device = devices.get(o.device_id or "")
-        if device is not None:
-            ips.add(device.ip)
-    return ips
+        grant(o.device_id or "", o.ends_at)
+    return DesiredState(
+        tuple(
+            Lease(
+                device_id,
+                devices[device_id].ip,
+                max(1, min(max_lease_seconds, math.ceil((end - now).total_seconds()))),
+            )
+            for device_id, end in sorted(ends.items())
+        )
+    )
