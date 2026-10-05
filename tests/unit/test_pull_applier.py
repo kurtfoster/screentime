@@ -362,19 +362,30 @@ def test_grace_then_fail_open_then_recovery(a: Applier) -> None:
     assert "mode fail-open -> normal" in a.syslog()
 
 
+def test_a_fresh_install_gets_a_grace_period_however_long_pfsense_has_been_up(
+    a: Applier,
+) -> None:
+    a.respond(doc(), fail=True)  # the controller is not answering yet
+    a.run(10_000)  # booted at 1000, so 9000 s ago; but this is the applier's first run
+    assert "mode grace" in a.ack() and a.tables() == ([], [], [])
+    a.run(10_601)
+    assert "mode fail-open" in a.ack()
+
+
 def test_the_episode_is_reported_for_seven_days_and_survives_a_reboot(a: Applier) -> None:
     a.respond(doc(), fail=True)
-    a.run(10_000)  # first run ever: grace counts from boot (1000), so already fail-open
+    a.run(10_000)
+    a.run(10_700)  # fail-open from here
     assert "mode fail-open" in a.ack()
     a.respond(doc())
-    a.run(10_300)
+    a.run(11_000)
     assert "last-failopen 300 300" in a.ack()
     a.boot(50_000)  # pfSense rebooted
     a.run(50_100)
-    assert "last-failopen 40100 300" in a.ack()
-    a.run(10_300 + 7 * 86400)
+    assert "last-failopen 39400 300" in a.ack()
+    a.run(11_000 + 7 * 86400)
     assert "last-failopen" in a.ack()
-    a.run(10_300 + 7 * 86400 + 1)
+    a.run(11_000 + 7 * 86400 + 1)
     assert "last-failopen" not in a.ack()
 
 
@@ -409,13 +420,14 @@ def test_a_failed_document_after_a_reboot_while_failed_open_keeps_the_episode_op
     a: Applier,
 ) -> None:
     a.respond(doc(), fail=True)
-    a.run(10_000)  # fail-open
+    a.run(10_000)
+    a.run(10_700)  # fail-open
     a.boot(30_000)
     a.run(30_100)  # grace after the reboot: the episode is still open
     assert "last-failopen" not in a.ack()
     a.respond(doc())
     a.run(30_200)
-    assert "last-failopen 20200 20200" in a.ack()  # the time pfSense was down counts
+    assert "last-failopen 19500 19500" in a.ack()  # the time pfSense was down counts
 
 
 # --- one run at a time, and no pfSense notifications ----------------------------------------

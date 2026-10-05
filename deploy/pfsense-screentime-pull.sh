@@ -13,8 +13,9 @@
 #      with the token and options on curl's stdin, never in the process list;
 #   2. parses it strictly: any unexpected line, size or device rejects the whole document;
 #   3. chooses the mode: normal after a good fetch; "grace" (keep leases) for STALE_GRACE
-#      seconds after the later of the last good fetch and boot; then fail-open (every mapped
-#      device allowed, no curfew) or, with STALE_POLICY=closed, nothing allowed;
+#      seconds after the latest of the last good fetch, boot and this applier's first run;
+#      then fail-open (every mapped device allowed, no curfew) or, with STALE_POLICY=closed,
+#      nothing allowed;
 #   4. replaces SCR_ACTIVE_PERSONAL, SCR_ACTIVE_TV and SCR_FAILOPEN in full, and kills the
 #      states of devices that left all three;
 #   5. acknowledges with POST <PI_URL>/firewall/v1/applied (best effort), reporting each
@@ -386,6 +387,8 @@ poll() {
         log "new boot: leases from the previous boot discarded"
     fi
     state_put boot "$boot"
+    # A fresh install has never been in contact: its grace period starts now, not at boot.
+    [ -f "$STATE_DIR/first_run" ] || state_put first_run "$t"
 
     previous=$(state_get mode normal)
     generation=$(state_get generation 0)
@@ -403,9 +406,10 @@ poll() {
     else
         reason=$(head -c 200 "$STATE_DIR/fetch.err" 2>/dev/null | tr -cd '\040-\176')
         [ -n "$reason" ] || reason="the document was rejected"
-        last_good=$(state_get last_good 0)
-        reference=$last_good
-        [ "$boot" -gt "$reference" ] && reference=$boot
+        reference=$(state_get last_good 0)
+        for candidate in "$boot" "$(state_get first_run 0)"; do
+            if [ "$candidate" -gt "$reference" ]; then reference=$candidate; fi
+        done
         if [ $(( t - reference )) -le "$STALE_GRACE" ]; then
             mode=grace
         elif [ "$STALE_POLICY" = open ]; then
