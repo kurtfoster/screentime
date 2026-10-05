@@ -1,0 +1,37 @@
+# /usr/local/etc/screentime-pull.conf on pfSense: root-owned, mode 0600 (it holds the token).
+# Create it empty first, then fill it in with Diagnostics > Edit File (OPERATIONS.md 2.4):
+#   install -o root -g wheel -m 0600 /dev/null /usr/local/etc/screentime-pull.conf
+# The applier refuses to run if the file is not root-owned 0600.
+
+# The controller: its name (as in its certificate) and its address. The name is resolved to the
+# address by curl itself, so pfSense's DNS is not involved.
+PI_URL=https://screen.home.arpa
+PI_ADDRESS=192.168.12.20
+# From:  admin_cli.py firewall-token rotate   (on the Pi; printed once)
+TOKEN=paste-the-token-here
+# The controller's private CA certificate (/etc/screentime/tls/ca.crt on the Pi), installed
+# root-owned 0644 so the unprivileged fetch can read it.
+CA_FILE=/usr/local/etc/screentime-ca.crt
+
+MANAGED_SUBNET=192.168.12.0/24
+
+# pfSense's own device map: the controller names devices, this file says where they are.
+# Keep it in step with config.yaml; admin_cli.py firewall-check compares the two.
+DEVICE_ipad="192.168.12.30 personal"
+DEVICE_iphone_child12="192.168.12.31 personal"
+DEVICE_kids_tv="192.168.12.40 tv"
+DEVICE_lounge_tv="192.168.12.41 tv"
+
+# Longest lease the controller may grant (at least 3 polls).
+MAX_LEASE=900
+# Seconds without a valid document before the policy applies; must equal the controller's
+# firewall.stale_grace_seconds.
+STALE_GRACE=600
+# open: allow every managed device, no curfew (owner decision D3/D4). closed: allow none.
+STALE_POLICY=open
+# 1 = one poll per minute (D2); up to 6.
+POLLS_PER_MINUTE=1
+
+TABLE_PERSONAL=SCR_ACTIVE_PERSONAL
+TABLE_TV=SCR_ACTIVE_TV
+TABLE_FAILOPEN=SCR_FAILOPEN

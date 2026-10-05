@@ -9,7 +9,7 @@ Acknowledgement, in this order (optional lines marked ?, repeated lines *)::
 
     screentime-applied v1
     generation <1-18 digits>
-    mode normal|grace|fail-open
+    mode normal|grace|fail-open|fail-closed
     ? stale <grace seconds> open|closed           pfSense's STALE_GRACE and STALE_POLICY
     ? last-failopen <started seconds ago> <duration seconds>
     * device <id>                                  devices with a lease now
@@ -31,7 +31,8 @@ MAX_DOCUMENT_BYTES = 4096
 DEVICE_ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 _GENERATION_RE = re.compile(r"^[0-9]{1,18}$")
 _SECONDS_AGO_RE = re.compile(r"^[0-9]{1,9}$")
-_MODES: frozenset[str] = frozenset({"normal", "grace", "fail-open"})
+# fail-closed: STALE_POLICY=closed past the grace period (nothing allowed).
+_MODES: frozenset[str] = frozenset({"normal", "grace", "fail-open", "fail-closed"})
 _IPV4_RE = re.compile(
     r"^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$"
 )

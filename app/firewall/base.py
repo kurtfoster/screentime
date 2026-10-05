@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 
-AppliedMode = Literal["normal", "grace", "fail-open"]
+AppliedMode = Literal["normal", "grace", "fail-open", "fail-closed"]
 
 
 class FirewallError(Exception):
