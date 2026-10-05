@@ -96,4 +96,6 @@ async def applied(request: Request) -> Response:
     now = ctx.clock.now()
     state = await run_sync(pull.record_ack, ack, now)
     ctx.enforcement.record_applied(state, now)
+    if ctx.alerts is not None:
+        await run_sync(ctx.alerts.record_failopen, ack, now)
     return Response(status_code=204, headers=_NO_STORE)

@@ -188,6 +188,26 @@ class FirewallAck(Base):
     generation: Mapped[int] = mapped_column(Integer)
     mode: Mapped[str] = mapped_column(String(16))
     device_ids: Mapped[str] = mapped_column(Text, default="")  # comma-separated device ids
+    # pfSense's reported STALE_GRACE and STALE_POLICY, and its device map as
+    # "id ip type" entries separated by ";" (empty when it did not report them).
+    stale_grace_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stale_policy: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    known_devices: Mapped[str] = mapped_column(Text, default="")
+
+
+class FailopenEpisode(Base):
+    """A period in which pfSense allowed every device because it could not reach this
+    controller (plan 5.2, D13). Times are this controller's, derived from pfSense's relative
+    report, so the two clocks are never compared."""
+
+    __tablename__ = "failopen_episodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    ended_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    reported_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    dismissed_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class AuditEvent(Base):

@@ -182,8 +182,18 @@ class FirewallCfg(_Strict):
     ack_timeout_seconds: int = Field(default=150, ge=60, le=900)
     # No fetch from pfSense for this long: "not checking in"; new child starts are refused.
     degraded_after_seconds: int = Field(default=180, ge=60, le=3600)
+    # This controller's copy of pfSense's STALE_GRACE (plan 5.2): no fetch for this long and
+    # pfSense has probably failed open. It must equal pfSense's value; firewall-check compares
+    # it with the value pfSense reports in its acknowledgements.
+    stale_grace_seconds: int = Field(default=600, ge=120, le=86400)
     education_dns_refresh_seconds: int = Field(default=300, ge=30, le=86400)
     include_ipv6_in_education: bool = True
+
+    @model_validator(mode="after")
+    def _warning_before_fail_open(self) -> FirewallCfg:
+        if self.degraded_after_seconds >= self.stale_grace_seconds:
+            raise ValueError("degraded_after_seconds must be less than stale_grace_seconds")
+        return self
 
     @field_validator("active_table", "education_table")
     @classmethod

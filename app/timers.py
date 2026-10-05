@@ -22,6 +22,7 @@ log = logging.getLogger("screentime.app")
 TICK_SECONDS = 5.0  # spec: at least every 10 seconds
 MAINTENANCE_SECONDS = 3600.0
 RESOURCE_SAMPLE_SECONDS = 60.0
+FIREWALL_ALERT_SECONDS = 60.0  # heartbeat and alert-state changes (plan 6.5)
 
 
 class Scheduler:
@@ -36,7 +37,9 @@ class Scheduler:
         reconcile_seconds: float | None = None,
         tick_lag: LagTracker | None = None,
         sample_resources: Callable[[], object] | None = None,
+        firewall_alerts: Callable[[], None] | None = None,
     ) -> None:
+        self._firewall_alerts = firewall_alerts
         self.tick_lag = tick_lag or LagTracker()
         self._sample_resources = sample_resources
         self._last_lag_warning = float("-inf")
@@ -92,6 +95,10 @@ class Scheduler:
         if self._sample_resources is not None:
             await run_sync(self._sample_resources)
 
+    async def _alerts(self) -> None:
+        if self._firewall_alerts is not None:
+            await run_sync(self._firewall_alerts)
+
     def start(self) -> None:
         if self._tasks:
             return
@@ -107,6 +114,8 @@ class Scheduler:
             ("housekeeping", self._housekeeping, lambda: MAINTENANCE_SECONDS),
             ("resources", self._resources, lambda: RESOURCE_SAMPLE_SECONDS),
         ]
+        if self._firewall_alerts is not None:
+            loops.append(("firewall-alerts", self._alerts, lambda: FIREWALL_ALERT_SECONDS))
         for name, work, interval in loops:
             self._tasks.append(asyncio.create_task(self._loop(name, work, interval), name=name))
 

@@ -269,3 +269,6 @@ body.is-offline .needs-server { display: none; }
   .btn { transition: transform 0.05s ease; }
   .btn:active { transform: scale(0.98); }
 }
+
+.fw-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.fw-banner span { flex: 1 1 220px; }

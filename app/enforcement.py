@@ -14,14 +14,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
-
 from app.clock import AssumeSynchronised, Clock, ClockSync, LogicalCalendar
 from app.config import AppConfig
 from app.db import Database
 from app.firewall.audited import AuditedFirewall
 from app.firewall.base import AppliedState, DesiredState, FirewallError
-from app.models import NotificationEvent
+from app.notifications import queue_parent_notification
 from app.runtime import run_sync
 from app.state import desired_leases
 
@@ -30,8 +28,10 @@ log = logging.getLogger("screentime.firewall")
 
 @dataclass(frozen=True)
 class PublishResult:
-    generation: int
+    generation: int | None
     desired: DesiredState
+    # True when nothing was published because the clock cannot be trusted (plan 5.5).
+    paused: bool = False
 
 
 class EnforcementService:
@@ -59,6 +59,7 @@ class EnforcementService:
         self.last_error: str | None = None
         self.desired_state = DesiredState()
         self.applied_state: AppliedState | None = None
+        self.publishing_paused = False
 
     @property
     def desired(self) -> set[str]:
@@ -94,13 +95,15 @@ class EnforcementService:
         async with self._lock:
             now = self._clock.now()
             self.last_publish_at = now
-            # With an untrusted clock, sessions that really ended can look current, so grant
-            # nothing at all (fail closed) until the clock is synchronised.
-            desired = (
-                await run_sync(self._read_desired, now)
-                if self.clock_synchronised()
-                else DesiredState()
-            )
+            if not self.clock_synchronised():
+                # With an untrusted clock, sessions that really ended can look current and
+                # leases would be wrong, so publish nothing at all (plan 5.5). The firewall
+                # keeps the leases it has, times them with its own clock, and after its grace
+                # period treats this controller as broken.
+                self.publishing_paused = True
+                return PublishResult(self.firewall.last_generation, self.desired_state, True)
+            self.publishing_paused = False
+            desired = await run_sync(self._read_desired, now)
             self.desired_state = desired
             try:
                 generation = await self.firewall.publish(desired)
@@ -162,20 +165,11 @@ class EnforcementService:
             )
 
     def _notify_parents(self, dedupe: str, title: str, body: str, kind: str, now: datetime) -> None:
-        if not self._cfg.notifications.parent_notifications_enabled:
+        # In pfsense_pull mode the firewall alerts (app.firewall.alerts) tell parents instead,
+        # in terms of pfSense checking in and failing open.
+        if self._cfg.firewall.mode == "pfsense_pull":
             return
         with self._db.session(write=True) as session:
-            if session.scalar(
-                select(NotificationEvent.id).where(NotificationEvent.dedupe_key == dedupe)
-            ):
-                return
-            session.add(
-                NotificationEvent(
-                    kind=kind,
-                    audience="parent",
-                    dedupe_key=dedupe,
-                    title=title,
-                    body=body,
-                    created_at=now,
-                )
+            queue_parent_notification(
+                session, self._cfg, now, kind=kind, title=title, body=body, dedupe=dedupe
             )

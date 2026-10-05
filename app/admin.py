@@ -309,6 +309,25 @@ def cmd_firewall_token_rotate(ctx: AppContext, args: argparse.Namespace, out: Ou
     return 0
 
 
+def cmd_firewall_check(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
+    """C9: config.yaml against what pfSense last reported (device map, grace period)."""
+    from app.firewall.alerts import drift
+
+    if ctx.pull is None:
+        out(f"firewall.mode is {ctx.config.firewall.mode}; the check needs pfsense_pull")
+        return 2
+    report = ctx.pull.report
+    if report is not None:
+        out(f"pfSense last acknowledged generation {report.generation}, mode {report.mode}")
+    problems = drift(ctx.config, report, None)
+    for problem in problems:
+        out(f"MISMATCH: {problem}")
+    if problems:
+        return 1
+    out("config.yaml matches pfSense: every device, address and type, and the grace period")
+    return 0
+
+
 def cmd_reconcile(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     async def run() -> int:
         try:
@@ -398,6 +417,9 @@ def build_parser() -> argparse.ArgumentParser:
     fw.add_parser("rotate", help="create a new token and print it once").set_defaults(
         func=cmd_firewall_token_rotate
     )
+    sub.add_parser(
+        "firewall-check", help="compare config.yaml with pfSense's reported device map"
+    ).set_defaults(func=cmd_firewall_check)
     p = sub.add_parser("reconcile", help="publish the desired firewall state now")
     p.add_argument("--education", action="store_true", help="also refresh the education allowlist")
     p.set_defaults(func=cmd_reconcile)

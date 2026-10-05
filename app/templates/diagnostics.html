@@ -34,9 +34,27 @@
       <tr><th>Generation</th><td class="mono">{{ generation if generation is not none else "not yet published" }}</td></tr>
       <tr><th>Desired</th><td class="mono">{{ desired | join(", ") or "none" }}</td></tr>
       <tr><th>Applied</th><td class="mono">{% if actual is none %}not yet acknowledged{% else %}{{ actual | join(", ") or "none" }}{% endif %}</td></tr>
+      {% if publishing_paused %}<tr><th>Publication</th><td>&#9888; paused: the clock is not synchronised (pfSense gets 503)</td></tr>{% endif %}
     </table>
   </section>
 
+  {% if pull %}
+  <section class="card stack">
+    <h2>pfSense (pull)</h2>
+    <table>
+      <tr><th>Last fetch</th><td>{% if pull.last_fetch_at %}{{ fmt(pull.last_fetch_at).strftime("%H:%M:%S") }}{% else %}none since the controller started at {{ fmt(pull.started_at).strftime("%H:%M:%S") }}{% endif %}</td></tr>
+      <tr><th>Last acknowledgement</th><td>{% if pull.last_ack_at %}{{ fmt(pull.last_ack_at).strftime("%a %H:%M:%S") }}{% else %}none{% endif %}</td></tr>
+      {% if pull_report %}
+      <tr><th>Acknowledged generation</th><td class="mono">{{ pull_report.generation }} (published {{ pull.published_generation if pull.published_generation is not none else "nothing yet" }})</td></tr>
+      <tr><th>Mode</th><td>{{ pull_report.mode }}</td></tr>
+      <tr><th>Leases</th><td class="mono">{{ pull_report.device_ids | sort | join(", ") or "none" }}</td></tr>
+      <tr><th>Grace and policy</th><td>{% if pull_report.stale %}{{ pull_report.stale[0] }} s, {{ pull_report.stale[1] }}{% else %}not reported{% endif %} (here: {{ grace_minutes }} min)</td></tr>
+      {% endif %}
+      <tr><th>Drift check</th><td>{% if drift %}&#9888; {{ drift | join("; ") }}{% else %}&#10003; config.yaml matches pfSense{% endif %}</td></tr>
+    </table>
+    <p class="muted small">The education allowlist is a pfSense FQDN alias: see <em>Diagnostics &rsaquo; Tables &rsaquo; SCR_EDU_ALLOW</em> on pfSense.</p>
+  </section>
+  {% else %}
   <section class="card stack">
     <h2>Education allowlist</h2>
     <table>
@@ -67,6 +85,7 @@
     <p class="muted">No allowlist hostnames are configured. Add domains under <code>always_allowed</code> in config.yaml.</p>
     {% endif %}
   </section>
+  {% endif %}
 
   <section class="card stack">
     <h2>Recent firewall operations</h2>

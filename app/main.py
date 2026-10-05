@@ -26,7 +26,7 @@ from app.config import ConfigError, config_path_from_env, load_config
 from app.context import AppContext, build_context
 from app.deps import ApiError, LoginRequired, client_ip, render
 from app.routes import account, api, auth, child, firewall, health, parent
-from app.runtime import limit_worker_threads
+from app.runtime import limit_worker_threads, run_sync
 from app.version import VERSION
 
 log = logging.getLogger("screentime.app")
@@ -76,6 +76,8 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
                 "no parent account exists: nobody can sign in as a parent until one is added "
                 "with scripts/admin_cli.py user add-parent"
             )
+        if ctx.alerts is not None:
+            await run_sync(ctx.alerts.on_start, ctx.clock.now())
         await ctx.orchestrator.startup()
         if run_background:
             ctx.scheduler.start()
@@ -84,6 +86,8 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
         finally:
             if run_background:
                 await ctx.scheduler.stop()
+            if ctx.alerts is not None:
+                ctx.alerts.heartbeat(ctx.clock.now())  # a clean stop is not an outage
             ctx.db.dispose()
 
     app = FastAPI(

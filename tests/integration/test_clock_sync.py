@@ -1,4 +1,5 @@
-"""No RTC on the Pi: nothing is granted and children cannot start until the clock is synchronised."""
+"""No RTC on the Pi: until the clock is synchronised, children cannot start and nothing is
+published (plan 5.5). The firewall keeps the leases it has and times them itself."""
 
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ def start(session: Session, device: str) -> object:
     return session.post("/api/child/session/start", {"device_id": device, "minutes": 30})
 
 
-def test_unsynchronised_clock_fails_closed_then_recovers(
+def test_unsynchronised_clock_pauses_publication_then_recovers(
     env_factory: Callable[..., AppEnv],
 ) -> None:
     sync = ManualSync(True)
@@ -35,12 +36,14 @@ def test_unsynchronised_clock_fails_closed_then_recovers(
     assert env.firewall.active == {IPAD}
 
     sync.synced = False  # e.g. the Pi rebooted after a power cut and NTP is not reachable
-    env.publish()
-    assert env.firewall.active == set()  # every grant withdrawn, including running sessions
+    env.firewall.clear_calls()
+    assert env.publish().paused
+    assert env.firewall.calls == []  # nothing is published: the firewall keeps its leases
     refused = start(child12, "iphone_child12")
     assert refused.status_code == 503  # type: ignore[attr-defined]
     assert refused.json()["reason"] == "CLOCK_NOT_SYNCED"  # type: ignore[attr-defined]
-    assert env.firewall.active == set()
+    assert env.firewall.active == {IPAD}
+    assert "paused: the clock is not synchronised" in parent.get("/parent/diagnostics").text
     with env.ctx.db.session() as db:
         reasons = [e.details_json for e in db.scalars(select(AuditEvent)) if e.result == "denied"]
     assert any("CLOCK_NOT_SYNCED" in r for r in reasons)
@@ -49,8 +52,8 @@ def test_unsynchronised_clock_fails_closed_then_recovers(
     assert "clock is not synchronised yet" in parent.get("/parent").text
 
     sync.synced = True
-    env.publish()
-    assert env.firewall.active == {IPAD}  # the session that was still running is restored
+    assert not env.publish().paused
+    assert env.firewall.active == {IPAD}  # the running session carries on
     assert start(child12, "iphone_child12").json()["ok"]  # type: ignore[attr-defined]
     assert env.firewall.active == {IPAD, IPHONE}
     ready = env.new_client().get("/health/ready")
@@ -58,13 +61,13 @@ def test_unsynchronised_clock_fails_closed_then_recovers(
     assert "clock is not synchronised yet" not in parent.get("/parent").text
 
 
-def test_startup_with_an_unsynchronised_clock_grants_nothing(
+def test_startup_with_an_unsynchronised_clock_publishes_nothing(
     env_factory: Callable[..., AppEnv],
 ) -> None:
     env = env_factory(clock_sync=ManualSync(False))
-    env.firewall.active.add(IPAD)  # left in pf by the previous run
+    env.firewall.clear_calls()
     env.publish()
-    assert env.firewall.active == set()
+    assert env.firewall.calls == [] and env.ctx.enforcement.publishing_paused
 
 
 def test_timesyncd_marker_is_latched(tmp_path: Path) -> None:

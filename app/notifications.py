@@ -14,6 +14,7 @@ from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.clock import Clock
 from app.config import AppConfig
@@ -31,6 +32,37 @@ MAX_FAILURES = 10
 
 class SubscriptionError(ValueError):
     pass
+
+
+def queue_parent_notification(
+    session: Session,
+    config: AppConfig,
+    now: datetime,
+    *,
+    kind: str,
+    title: str,
+    body: str,
+    dedupe: str,
+) -> bool:
+    """Add a parent notification to the caller's transaction, once per ``dedupe`` key.
+
+    It is delivered by push to parents who turned alerts on; the dashboard never depends on it.
+    """
+    if not config.notifications.parent_notifications_enabled:
+        return False
+    if session.scalar(select(NotificationEvent.id).where(NotificationEvent.dedupe_key == dedupe)):
+        return False
+    session.add(
+        NotificationEvent(
+            kind=kind,
+            audience="parent",
+            dedupe_key=dedupe[:160],
+            title=title[:120],
+            body=body[:300],
+            created_at=now,
+        )
+    )
+    return True
 
 
 class Notifier:

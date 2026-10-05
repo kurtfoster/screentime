@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.auth import Principal
 from app.db import current_revision
 from app.deps import ctx_of, parent_page, render
+from app.firewall.alerts import drift
 from app.models import AuditEvent, FirewallEvent
 from app.runtime import run_sync
 from app.runtime_deps import dependency_report
@@ -27,14 +28,18 @@ async def _build(request: Request) -> ParentView:
 
     def build() -> ParentView:
         locked = [name for name, _ in ctx.auth.locked_children()]
+        now = ctx.clock.now()
+        banners = ctx.alerts.banners(now) if ctx.alerts is not None else []
         with ctx.db.session() as session:
             return ctx.views.parent_view(
                 session,
-                ctx.clock.now(),
-                degraded=ctx.enforcement.degraded,
+                now,
+                # In pull mode the firewall banners say it better (plan 6.5).
+                degraded=ctx.enforcement.degraded and ctx.alerts is None,
                 degraded_error=ctx.enforcement.last_error or "",
                 locked=locked,
                 clock_synchronised=clock_synchronised,
+                firewall_banners=banners,
             )
 
     return await run_sync(build)
@@ -101,6 +106,13 @@ async def diagnostics(request: Request, principal: Principal = Depends(parent_pa
         "desired": sorted(enforcement.desired),
         "actual": sorted(enforcement.actual) if enforcement.actual is not None else None,
         "generation": ctx.firewall.last_generation,
+        "publishing_paused": enforcement.publishing_paused,
+        "pull": ctx.pull,
+        "pull_report": ctx.pull.report if ctx.pull else None,
+        "drift": (
+            drift(ctx.config, ctx.pull.report, ctx.pull.published_generation) if ctx.pull else []
+        ),
+        "grace_minutes": int(ctx.alerts.grace().total_seconds() // 60) if ctx.alerts else None,
         "resolver": resolver,
         "hosts": sorted(resolver.hosts.values(), key=lambda h: (h.service, h.host)),
         "unresolved": resolver.unresolved(),

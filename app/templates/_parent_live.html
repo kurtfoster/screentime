@@ -3,6 +3,12 @@
 <div id="live" class="dash" hx-get="/parent/live?k={{ view.state_key }}" hx-trigger="every {{ view.poll_seconds }}s" hx-swap="outerHTML">
   <section class="card stack dash-now" aria-labelledby="now-heading">
     <h2 id="now-heading">Right now</h2>
+    {% for b in view.firewall_banners %}
+    <div class="banner {% if b.level == 'danger' %}banner-error{% else %}banner-warn{% endif %} fw-banner" role="alert">
+      <span>&#9888; {{ b.text }}</span>
+      {% if b.episode_id %}<button class="btn btn-secondary btn-small needs-server" type="button" data-api-post="/api/parent/failopen/{{ b.episode_id }}/dismiss" data-done="Dismissed.">Dismiss</button>{% endif %}
+    </div>
+    {% endfor %}
     {% if view.degraded %}
     <div class="banner banner-error" role="alert">
       &#9888; Enforcement degraded: the controller can't reach the firewall, so new child sessions are blocked and running sessions may not switch off.

@@ -248,6 +248,19 @@ async def parent_reset_lockout(
     return JSONResponse({"ok": True, "reset": reset, "reason": "OK", "message": "Login unlocked."})
 
 
+@router.post("/parent/failopen/{episode_id}/dismiss")
+async def parent_dismiss_failopen(
+    request: Request, episode_id: int, principal: Principal = Depends(parent_api)
+) -> JSONResponse:
+    """Any parent may dismiss a fail-open episode banner; the dismissal is audited."""
+    alerts = ctx_of(request).alerts
+    if alerts is None:
+        raise ApiError(404, Reason.NOT_FOUND, "Not found.")
+    if not await run_sync(alerts.dismiss, episode_id, principal.username):
+        raise ApiError(404, Reason.NOT_FOUND, "That alert is already dismissed.")
+    return JSONResponse({"ok": True, "reason": "OK", "message": "Dismissed."})
+
+
 # --- push (any signed-in user) ---------------------------------------------------------
 
 

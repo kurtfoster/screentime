@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 
 from app.accounts import AccountService
 from app.auth import AuthService, SlidingWindowLimiter
@@ -22,6 +22,7 @@ from app.clock import (
 from app.config import AppConfig
 from app.db import Database
 from app.enforcement import EnforcementService
+from app.firewall.alerts import FirewallAlerts
 from app.firewall.audited import AuditedFirewall
 from app.firewall.base import FirewallAdapter
 from app.firewall.dry_run import DryRunFirewallAdapter
@@ -29,7 +30,7 @@ from app.firewall.generations import DbGenerations
 from app.firewall.pfsense_ssh import PfSenseSshFirewallAdapter
 from app.firewall.pull import PullFirewallAdapter
 from app.firewall.resolver import DnsClient, EducationResolver
-from app.models import FirewallEvent, WebSession
+from app.models import FirewallAck, FirewallEvent, WebSession
 from app.notifications import Notifier
 from app.orchestrator import Orchestrator
 from app.policy import PolicyEngine
@@ -61,8 +62,16 @@ class AppContext:
     accounts: AccountService
     scheduler: Scheduler
     pull: PullFirewallAdapter | None  # set in pfsense_pull mode: the /firewall/v1 routes use it
+    alerts: FirewallAlerts | None  # set in pfsense_pull mode (plan 6.5, D13)
     action_limiter: SlidingWindowLimiter
     monitor: ResourceMonitor
+
+    def firewall_alerts_tick(self) -> None:
+        """Every minute in pull mode: the heartbeat, then any change of alert state."""
+        if self.alerts is not None:
+            now = self.clock.now()
+            self.alerts.heartbeat(now)
+            self.alerts.update(now)
 
     def maintenance(self) -> None:
         """Hourly housekeeping: expired web sessions and old firewall events."""
@@ -71,6 +80,14 @@ class AppContext:
             session.execute(delete(WebSession).where(WebSession.expires_at < now))
             session.execute(
                 delete(FirewallEvent).where(FirewallEvent.timestamp < now - timedelta(days=30))
+            )
+            # Acknowledgements are stored only when they change; keep a month, and always the
+            # latest (it is what the controller knows about pfSense after a restart).
+            newest = session.scalar(select(func.max(FirewallAck.id)))
+            session.execute(
+                delete(FirewallAck).where(
+                    FirewallAck.received_at < now - timedelta(days=30), FirewallAck.id != newest
+                )
             )
 
 
@@ -169,6 +186,11 @@ def build_context(
         auth=auth,
         accounts=accounts,
         pull=adapter if isinstance(adapter, PullFirewallAdapter) else None,
+        alerts=(
+            FirewallAlerts(db, config, clock, calendar, adapter)
+            if isinstance(adapter, PullFirewallAdapter)
+            else None
+        ),
         scheduler=None,  # type: ignore[arg-type]  # assigned below (needs ctx.maintenance)
         action_limiter=SlidingWindowLimiter(config.security.grant_actions_per_minute),
         monitor=monitor,
@@ -180,5 +202,6 @@ def build_context(
         ctx.maintenance,
         tick_lag=tick_lag,
         sample_resources=monitor.sample,
+        firewall_alerts=ctx.firewall_alerts_tick if ctx.alerts else None,
     )
     return ctx

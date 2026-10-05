@@ -4,6 +4,20 @@ Both are small, line-based US-ASCII documents with a fixed first and last line. 
 all-or-nothing: any unexpected line, character or size rejects the whole document, so a
 truncated or tampered acknowledgement is never half-applied. The pfSense side has its own
 parser for the desired document (deploy/pfsense-screentime-pull.sh); this module renders it.
+
+Acknowledgement, in this order (optional lines marked ?, repeated lines *)::
+
+    screentime-applied v1
+    generation <1-18 digits>
+    mode normal|grace|fail-open
+    ? stale <grace seconds> open|closed           pfSense's STALE_GRACE and STALE_POLICY
+    ? last-failopen <started seconds ago> <duration seconds>
+    * device <id>                                  devices with a lease now
+    * known <id> <ipv4> personal|tv                pfSense's device map
+    end
+
+``stale`` and ``known`` extend the plan's grammar: without them the controller could not
+check that its copy of the grace period and its device list match pfSense (C9).
 """
 
 from __future__ import annotations
@@ -18,6 +32,9 @@ DEVICE_ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 _GENERATION_RE = re.compile(r"^[0-9]{1,18}$")
 _SECONDS_AGO_RE = re.compile(r"^[0-9]{1,9}$")
 _MODES: frozenset[str] = frozenset({"normal", "grace", "fail-open"})
+_IPV4_RE = re.compile(
+    r"^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$"
+)
 
 DESIRED_HEADER = "screentime-desired v1"
 APPLIED_HEADER = "screentime-applied v1"
@@ -37,6 +54,10 @@ class Acknowledgement:
     # (started this many seconds ago, lasted this many seconds). Relative, so the two
     # clocks are never compared.
     last_failopen: tuple[int, int] | None = None
+    # pfSense's STALE_GRACE seconds and STALE_POLICY, when it reports them.
+    stale: tuple[int, str] | None = None
+    # pfSense's device map: id -> (address, "personal" or "tv"), when it reports it.
+    known: dict[str, tuple[str, str]] | None = None
 
 
 def render_desired(generation: int, desired: DesiredState) -> str:
@@ -77,6 +98,22 @@ def parse_applied(body: bytes) -> Acknowledgement:
     if key != "mode" or mode not in _MODES:
         raise ProtocolError("bad mode line")
 
+    stale: tuple[int, str] | None = None
+    if rest and rest[0].startswith("stale "):
+        parts = rest[0].split(" ")
+        if (
+            len(parts) != 3
+            or not _SECONDS_AGO_RE.match(parts[1])
+            or parts[2]
+            not in {
+                "open",
+                "closed",
+            }
+        ):
+            raise ProtocolError("bad stale line")
+        stale = (int(parts[1]), parts[2])
+        rest = rest[1:]
+
     last_failopen: tuple[int, int] | None = None
     if rest and rest[0].startswith("last-failopen "):
         parts = rest[0].split(" ")
@@ -86,11 +123,27 @@ def parse_applied(body: bytes) -> Acknowledgement:
         rest = rest[1:]
 
     devices: set[str] = set()
-    for line in rest:
-        parts = line.split(" ")
-        if len(parts) != 2 or parts[0] != "device" or not DEVICE_ID_RE.match(parts[1]):
+    while rest and rest[0].startswith("device "):
+        parts = rest.pop(0).split(" ")
+        if len(parts) != 2 or not DEVICE_ID_RE.match(parts[1]):
             raise ProtocolError("bad device line")
         if parts[1] in devices:
             raise ProtocolError("duplicate device line")
         devices.add(parts[1])
-    return Acknowledgement(int(value), mode, frozenset(devices), last_failopen)  # type: ignore[arg-type]
+
+    known: dict[str, tuple[str, str]] | None = None
+    for line in rest:
+        parts = line.split(" ")
+        if (
+            len(parts) != 4
+            or parts[0] != "known"
+            or not DEVICE_ID_RE.match(parts[1])
+            or not _IPV4_RE.match(parts[2])
+            or parts[3] not in {"personal", "tv"}
+        ):
+            raise ProtocolError("bad line")
+        known = known if known is not None else {}
+        if parts[1] in known:
+            raise ProtocolError("duplicate known line")
+        known[parts[1]] = (parts[2], parts[3])
+    return Acknowledgement(int(value), mode, frozenset(devices), last_failopen, stale, known)  # type: ignore[arg-type]

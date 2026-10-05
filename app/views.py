@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.clock import LogicalCalendar
 from app.config import AppConfig
+from app.firewall.alerts import Banner
 from app.models import (
     SESSION_ACTIVE,
     SESSION_ENFORCEMENT_FAILED,
@@ -136,6 +137,7 @@ class ParentView:
     tv_choices: list[int]
     allow_until_stopped: bool
     account_lines: list[str]
+    firewall_banners: list[Banner]  # plan 6.5: never shown to children
     state_key: str
 
 
@@ -368,6 +370,7 @@ class ViewBuilder:
         degraded_error: str,
         locked: list[str],
         clock_synchronised: bool = True,
+        firewall_banners: list[Banner] | None = None,
     ) -> ParentView:
         cfg, cal = self.cfg, self.cal
         day = cal.logical_day(now)
@@ -484,6 +487,7 @@ class ViewBuilder:
             tv_choices=list(cfg.parents.tv_session_choices_minutes),
             allow_until_stopped=cfg.parents.allow_until_stopped,
             account_lines=self._account_lines(db, now, accounts),
+            firewall_banners=firewall_banners or [],
             state_key="",
         )
         view.state_key = _fingerprint(
@@ -500,6 +504,7 @@ class ViewBuilder:
                 for r in rows
             ],
             view.account_lines,
+            view.firewall_banners,
             [(s.id, s.pending) for s in session_rows],
             [(t.device_id, t.users) for t in tv_rows],
             override_rows,
