@@ -82,7 +82,7 @@ def check_cryptography() -> None:
     a, b = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
     if a.exchange(ec.ECDH(), b.public_key()) != b.exchange(ec.ECDH(), a.public_key()):
         raise SystemExit("ECDH P-256 shared secrets differ")
-    key, nonce = AESGCM.generate_key(bit_length=128), os.urandom(12)
+    key, nonce = AESGCM.generate_key(128), os.urandom(12)  # positional: renamed in 43
     if AESGCM(key).decrypt(nonce, AESGCM(key).encrypt(nonce, b"x", None), None) != b"x":
         raise SystemExit("AES-GCM round trip failed")
     token = Fernet(Fernet.generate_key())
