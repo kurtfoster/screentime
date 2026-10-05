@@ -71,16 +71,17 @@ def test_parent_grant_and_end_today_are_reflected_for_the_child(
     sign_in(parent, live_app, "parents")
     child_card = parent.get_by_role("region", name="Child 8")
 
-    child_card.get_by_role("button", name="+15", exact=True).click()
+    child_card.get_by_role("button", name="+15 min", exact=True).click()
     expect(child_card.get_by_text("2h 15m")).to_be_visible(timeout=SLOW)
     child.reload()
     expect(child.get_by_text("2h 15m")).to_be_visible()
 
     child.get_by_role("button", name="START SCREEN TIME").click()
     expect(child.locator(".timer")).to_be_visible()
-    child_card.get_by_role("button", name="END TODAY").click()  # confirm() is auto-accepted
+    child_card.get_by_text("More for Child 8").click()  # destructive actions sit apart (M4)
+    child_card.get_by_role("button", name="End today").click()  # confirm() is auto-accepted
     expect(child_card.get_by_text("Ended for today")).to_be_visible(timeout=SLOW)
-    expect(child_card.get_by_role("button", name="CLEAR DAY LOCK")).to_be_visible()
+    expect(child_card.get_by_role("button", name="Clear day lock")).to_be_visible()
     assert live_app.firewall.active == set()
 
     expect(child.get_by_text("Screen time has finished for today.").first).to_be_visible(
@@ -88,8 +89,8 @@ def test_parent_grant_and_end_today_are_reflected_for_the_child(
     )
     expect(child.get_by_role("button", name="START SCREEN TIME")).to_be_disabled()
 
-    child_card.get_by_role("button", name="CLEAR DAY LOCK").click()
-    expect(child_card.get_by_role("button", name="CLEAR DAY LOCK")).to_have_count(0, timeout=SLOW)
+    child_card.get_by_role("button", name="Clear day lock").click()
+    expect(child_card.get_by_role("button", name="Clear day lock")).to_have_count(0, timeout=SLOW)
     child_ctx.close()
     parent_ctx.close()
 
@@ -98,11 +99,13 @@ def test_parent_starts_and_stops_a_tv(browser: Browser, live_app: LiveApp) -> No
     ctx, parent = open_page(browser)
     sign_in(parent, live_app, "parents")
     tv = parent.get_by_role("group", name="Start Kids TV")
-    tv.get_by_role("button", name="30", exact=True).click()
-    expect(parent.get_by_text("Parent: ends 10:30")).to_be_visible(timeout=SLOW)
+    tv.get_by_role("button", name="30 min", exact=True).click()
+    now = parent.get_by_role("region", name="Right now")
+    expect(now.get_by_text("on Kids TV")).to_be_visible(timeout=SLOW)
+    expect(parent.get_by_text("On until 10:30")).to_be_visible()
     assert live_app.firewall.active == {KIDS_TV}
-    parent.get_by_role("button", name="Stop", exact=True).first.click()
-    expect(parent.get_by_text("Parent: ends 10:30")).to_have_count(0, timeout=SLOW)
+    now.get_by_role("button", name="Stop", exact=True).click()  # confirm() is auto-accepted
+    expect(now.get_by_text("on Kids TV")).to_have_count(0, timeout=SLOW)
     assert live_app.firewall.active == set()
     ctx.close()
 
@@ -260,6 +263,7 @@ def test_parent_sets_a_childs_password_from_the_dashboard(
 ) -> None:
     ctx, page = open_page(browser)
     sign_in(page, live_app, "parents")
+    page.get_by_text("More for Child 8").click()
     page.locator('a[href="/parent/user/child8/password"]').click()
     new = page.locator('input[name="new_password"]')
     new.fill("kea-nest-3")

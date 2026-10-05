@@ -3,9 +3,8 @@
   <div class="banner banner-warn" role="alert">&#9888; Screen time can't start right now. Ask a parent for help.</div>
   {% endif %}
 
-  <section class="card hero" aria-label="Time left today">
-    <p class="label">Today</p>
-    <p class="big">{{ view.remaining_text }} <span>remaining</span></p>
+  <section class="card hero compact" aria-label="Time left today">
+    <p class="big">{{ view.remaining_text }} <span>left today</span></p>
     {% if view.start_rule %}<p class="muted small">&#128337; {{ view.start_rule }}</p>{% endif %}
     {% for line in view.cutoff_lines %}<p class="muted small">&#128250; {{ line }}</p>{% endfor %}
     {% if view.override_note %}<p class="notice notice-ok">&#9733; {{ view.override_note }}</p>{% endif %}
@@ -48,10 +47,10 @@
   {% else %}
   {% set any_device = view.devices | selectattr("available") | list %}
   {% set any_time = view.durations | selectattr("available") | list %}
-  <form id="start-form" class="card stack" action="#" method="post">
+  <form id="start-form" class="card stack compact" action="#" method="post">
     <fieldset>
       <legend>Choose device</legend>
-      <div class="choices stacked">
+      <div class="choices devices">
         {% for d in view.devices %}
         <label class="choice">
           <input type="radio" name="device_id" value="{{ d.id }}" data-shared="{{ 0 if d.is_personal else 1 }}" {% if not d.available %}disabled{% endif %} {% if d.available and d.id == any_device[0].id %}checked{% endif %}>
@@ -64,12 +63,12 @@
 
     <fieldset>
       <legend>Choose time</legend>
-      <div class="choices">
+      <div class="choices durations">
         {% for t in view.durations %}
         <label class="choice">
           <input type="radio" name="minutes" value="{{ t.minutes }}" {% if not t.available %}disabled{% endif %} {% if t.selected %}checked{% endif %}>
           <span class="choice-title">{{ t.minutes }} min</span>
-          {% if t.selected %}<span class="default-tag">picked for you</span>{% endif %}
+          {% if t.selected %}<span class="default-tag">&#10003; default</span>{% endif %}
         </label>
         {% endfor %}
       </div>

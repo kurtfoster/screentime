@@ -45,9 +45,9 @@
   <div id="offline-banner" class="banner banner-error" role="alert" hidden>
     &#9888; Screen Time controller unavailable. Check the home network, then try again.
   </div>
-  <div id="flash" class="flash" role="status" aria-live="polite"></div>
-  <main id="main">
+  <main id="main" class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
+  <div id="flash" class="flash" role="status" aria-live="polite"></div>
 </body>
 </html>

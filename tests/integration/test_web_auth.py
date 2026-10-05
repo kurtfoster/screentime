@@ -36,14 +36,14 @@ def test_child_login_lands_on_child_dashboard_only(app_env: AppEnv, child8: Sess
     assert (
         page.status_code == 200 and "START SCREEN TIME" in page.text and "Hi Child 8" in page.text
     )
-    assert "END TODAY" not in page.text
+    assert "End today" not in page.text
     root = child8.client.get("/", follow_redirects=False)
     assert root.status_code == 303 and root.headers["location"] == "/child"
 
 
 def test_parent_login_lands_on_parent_dashboard(parent: Session) -> None:
     page = parent.get("/parent")
-    assert page.status_code == 200 and "END TODAY" in page.text and "TV access" in page.text
+    assert page.status_code == 200 and "End today" in page.text and "TV access" in page.text
 
 
 def test_children_cannot_reach_parent_pages_or_apis_even_by_guessing_urls(
@@ -147,7 +147,7 @@ def test_failed_logins_lock_a_child_until_a_parent_resets(app_env: AppEnv, paren
     # Even the correct password is refused while locked.
     assert attempt(client, "child8", PASSWORDS["child8"]).status_code == 429
     dash = parent.get("/parent/live")
-    assert "Locked logins" in dash.text and "child8" in dash.text
+    assert "Login locked" in dash.text and "/api/parent/lockouts/child8/reset" in dash.text
     assert parent.post("/api/parent/lockouts/child8/reset").json()["ok"] is True
     assert attempt(client, "child8", PASSWORDS["child8"]).status_code == 303
 

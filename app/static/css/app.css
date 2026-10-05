@@ -1,4 +1,6 @@
-/* Screen Time: mobile-first, large touch targets, colour never the only signal. */
+/* Screen Time: mobile-first, large touch targets, colour never the only signal.
+   Sizes (plan 8.2 M9, 8.3): body and form text at least 16 px (iOS zooms into smaller inputs),
+   labels at least 14 px (0.875rem), every control at least 44 x 44 CSS px. */
 
 :root {
   --bg: #f4f6fb;
@@ -45,6 +47,8 @@
 * { box-sizing: border-box; }
 
 html { -webkit-text-size-adjust: 100%; }
+/* Form controls inherit the 18 px body text: iOS zooms into anything under 16 px (M9). */
+input, button, select, textarea { font: inherit; }
 
 body {
   margin: 0;
@@ -86,6 +90,8 @@ body {
 .menu-item:hover, .menu-item:focus-visible { background: var(--primary-soft); }
 
 main { max-width: 720px; margin: 0 auto; padding: var(--gutter); }
+main.wide { max-width: 1100px; }
+main.narrow-main { max-width: 560px; }
 .stack { display: grid; gap: var(--gutter); }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .spread { justify-content: space-between; }
@@ -95,12 +101,15 @@ main { max-width: 720px; margin: 0 auto; padding: var(--gutter); }
   border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow);
 }
 .card h2 { margin: 0 0 6px; font-size: 1.15rem; }
-.label { margin: 0; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
-.big { margin: 2px 0 6px; font-size: 2.4rem; font-weight: 750; line-height: 1.1; }
+.label { margin: 0; color: var(--muted); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.big { margin: 2px 0 4px; font-size: 2.2rem; font-weight: 750; line-height: 1.1; }
 .big span { font-size: 1.1rem; font-weight: 500; color: var(--muted); }
 .muted { color: var(--muted); }
 .small { font-size: 0.9rem; }
 .hero { border-width: 2px; border-color: var(--primary); }
+.card.compact { padding: 14px 16px; }
+#start-form { gap: 12px; }
+legend { margin-bottom: 6px; }
 .timer { font-size: 3rem; font-weight: 800; margin: 4px 0; font-variant-numeric: tabular-nums; }
 .timer .unit { font-size: 1.1rem; font-weight: 500; color: var(--muted); }
 .card p { margin-top: 4px; margin-bottom: 4px; }
@@ -111,29 +120,38 @@ legend { font-weight: 700; padding: 0; margin-bottom: 8px; }
 /* Selectable tiles built from radios/checkboxes; the checked state carries a tick as well as colour. */
 .choice {
   position: relative; display: flex; flex-direction: column; justify-content: center;
-  min-height: var(--tap); padding: 10px 16px 10px 48px;
+  min-height: var(--tap); padding: 8px 10px 8px 44px;
   border: 2px solid var(--border); border-radius: 14px; background: var(--surface);
   cursor: pointer;
 }
 .choice input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .choice::before {
-  content: ""; position: absolute; left: 14px; top: 50%; width: 22px; height: 22px;
+  content: ""; position: absolute; left: 12px; top: 50%; width: 22px; height: 22px;
   margin-top: -11px; border: 2px solid var(--muted); border-radius: 50%;
 }
 .choice:has(input[type="checkbox"])::before { border-radius: 6px; }
 .choice:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
 .choice:has(input:checked)::before { background: var(--primary); border-color: var(--primary); }
 .choice:has(input:checked)::after {
-  content: "\2713"; position: absolute; left: 19px; top: 50%; margin-top: -13px;
+  content: "\2713"; position: absolute; left: 17px; top: 50%; margin-top: -13px;
   color: var(--primary-text); font-weight: 800; font-size: 1rem;
 }
 .choice:has(input:focus-visible) { outline: 3px solid var(--primary); outline-offset: 2px; }
 .choice:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
 .choice-title { font-weight: 700; }
-.choice-note { font-size: 0.85rem; color: var(--muted); }
+.choice-note { font-size: 0.875rem; color: var(--muted); }
 .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .choices.stacked { grid-template-columns: 1fr; }
-.default-tag { font-size: 0.75rem; color: var(--muted); }
+/* M6: always three duration tiles per row, so 15 / 30 / 60 never wrap two plus one. The tiles
+   are too narrow for the round indicator, so the chosen one shows a tick before its time. */
+.choices.durations { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.durations .choice { padding: 8px 4px; align-items: center; text-align: center; }
+.durations .choice::before, .durations .choice:has(input:checked)::after { content: none; }
+.durations .choice-title { white-space: nowrap; }
+.durations .choice:has(input:checked) .choice-title::before { content: "\2713\00a0"; color: var(--primary); }
+.choices.devices { grid-template-columns: 1fr; gap: 8px; }
+.devices .choice { min-height: 48px; }
+.default-tag { font-size: 0.875rem; color: var(--muted); white-space: nowrap; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -145,10 +163,11 @@ legend { font-weight: 700; padding: 0; margin-bottom: 8px; }
 .btn:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
 .btn-large { width: 100%; min-height: 68px; font-size: 1.25rem; }
+@media (max-width: 359px) { .btn-large { font-size: 1.1rem; } }
 .btn-secondary { background: transparent; color: var(--primary); }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn-outline-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
-.btn-small { min-height: 44px; padding: 6px 14px; font-size: 0.95rem; }
+.btn-small { min-height: 44px; min-width: 44px; padding: 6px 14px; font-size: 1rem; }
 .btn-link { background: none; border: 0; color: var(--primary); text-decoration: underline; padding: 8px; min-height: 44px; font: inherit; cursor: pointer; }
 
 .banner, .notice {
@@ -159,24 +178,68 @@ legend { font-weight: 700; padding: 0; margin-bottom: 8px; }
 .notice-ok { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
 .banner[hidden] { display: none; }
 
-.flash { position: sticky; top: 0; z-index: 5; padding: 0 var(--gutter); max-width: 720px; margin: 0 auto; }
-.flash .banner { margin-top: 10px; }
+/* M7: confirmations are a toast at the bottom, inside the safe area, never over the page top. */
+.flash {
+  position: fixed; left: 0; right: 0; z-index: 30; pointer-events: none;
+  bottom: calc(12px + env(safe-area-inset-bottom)); padding: 0 var(--gutter);
+}
+.flash .toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 10px; width: 100%;
+  max-width: 560px; min-height: 56px; margin: 0 auto; padding: 10px 14px; text-align: left;
+  font: inherit; font-weight: 600; box-shadow: 0 6px 24px rgba(20, 33, 61, 0.25); cursor: pointer;
+}
+.flash .toast span { flex: 1; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px;
-  border: 2px solid var(--border); font-size: 0.85rem; font-weight: 700;
+  border: 2px solid var(--border); font-size: 0.875rem; font-weight: 700;
 }
 .chip-ok { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
 .chip-warn { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
 .chip-danger { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
 
-.grants { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.tv-buttons { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-@media (min-width: 520px) { .tv-buttons { grid-template-columns: repeat(4, 1fr); } }
+.grants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.grants .btn, .tv-buttons .btn { padding: 8px 6px; font-size: 1rem; }
+.tv-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tv-buttons .btn { padding: 4px; line-height: 1.15; }
+@media (min-width: 360px) { .tv-buttons { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.push-row { display: flex; align-items: center; gap: 12px; margin-top: var(--gutter); }
+.push-row p { flex: 1; margin: 0; }
+
+/* Parent dashboard (M1, M5): one column on phones; from 768 px, children on the left and
+   "Right now" plus TVs on the right. */
+.dash { display: grid; gap: var(--gutter); align-items: start; }
+.dash .card { padding: 14px 16px; }
+.dash h2 { margin: 0; }
+.dash .stack { gap: 12px; }
+.now-row, .tv-row { display: grid; gap: 8px; }
+.now-row { grid-template-columns: 1fr auto; align-items: center; padding-top: 10px; border-top: 1px solid var(--border); }
+.tv-row + .tv-row { padding-top: 12px; border-top: 1px solid var(--border); }
+.child-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.child-head .chip { margin-left: auto; align-self: center; }
+.remaining { margin: 0; font-size: 1rem; color: var(--muted); }
+.remaining strong { font-size: 1.5rem; color: var(--text); }
+.child-card .notice { margin: 0; padding: 8px 12px; }
+details.more > summary {
+  display: flex; align-items: center; min-height: 48px; cursor: pointer; color: var(--primary);
+  font-weight: 700; list-style: none;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: "\25B8"; margin-right: 8px; }
+details.more[open] > summary::before { content: "\25BE"; }
+.more-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding-top: 4px; }
+.dash-log p { margin: 2px 0; }
+@media (min-width: 768px) {
+  .dash { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "kids now" "kids tv" "log log"; }
+  .dash-now { grid-area: now; }
+  .dash-kids { grid-area: kids; }
+  .dash-tv { grid-area: tv; }
+  .dash-log { grid-area: log; }
+}
 
 table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
-th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+th { color: var(--muted); font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .scroll { overflow-x: auto; }
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
 

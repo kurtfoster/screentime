@@ -90,6 +90,7 @@ class ChildRow:
     child_id: str
     username: str
     has_password: bool
+    login_locked: bool
     name: str
     remaining_minutes: int
     remaining_text: str
@@ -374,6 +375,7 @@ class ViewBuilder:
                 ChildRow(
                     child_id=child_id,
                     username=child.username,
+                    login_locked=child.username in locked,
                     has_password=bool(
                         child.username in accounts
                         and accounts[child.username].enabled
@@ -461,6 +463,7 @@ class ViewBuilder:
                     r.sessions,
                     r.override_until,
                     r.has_password,
+                    r.login_locked,
                 )
                 for r in rows
             ],

@@ -13,15 +13,27 @@
       ? crypto.randomUUID()
       : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 
+  // M7: a toast at the bottom of the screen. Confirmations go after 4 s; errors stay until
+  // tapped (or replaced). Either can be dismissed with a tap. The region is aria-live.
+  let flashTimer = 0;
   function showFlash(message, kind) {
     if (!flash) return;
+    clearTimeout(flashTimer);
     flash.replaceChildren();
     if (!message) return;
-    const div = document.createElement("div");
-    div.className = `banner ${kind === "ok" ? "notice-ok" : "banner-error"}`;
-    div.textContent = (kind === "ok" ? "✓ " : "⚠ ") + message;
-    flash.append(div);
-    if (kind === "ok") setTimeout(() => flash.replaceChildren(), 6000);
+    const toast = document.createElement("button");
+    toast.type = "button";
+    toast.className = `toast banner ${kind === "ok" ? "notice-ok" : "banner-error"}`;
+    const text = document.createElement("span");
+    text.textContent = (kind === "ok" ? "✓ " : "⚠ ") + message;
+    const close = document.createElement("strong");
+    close.setAttribute("aria-hidden", "true");
+    close.textContent = "×";
+    toast.setAttribute("aria-label", `${message} (tap to dismiss)`);
+    toast.append(text, close);
+    toast.addEventListener("click", () => flash.replaceChildren());
+    flash.append(toast);
+    if (kind === "ok") flashTimer = setTimeout(() => flash.replaceChildren(), 4000);
   }
 
   function setOffline(offline) {
