@@ -25,7 +25,7 @@ from app.audit import configure_logging
 from app.config import ConfigError, config_path_from_env, load_config
 from app.context import AppContext, build_context
 from app.deps import ApiError, LoginRequired, client_ip, render
-from app.routes import account, api, auth, child, health, parent
+from app.routes import account, api, auth, child, firewall, health, parent
 from app.runtime import limit_worker_threads
 from app.version import VERSION
 
@@ -50,7 +50,8 @@ def _log_request(request: Request, status: int, started: float) -> None:
     path = request.url.path
     if path.startswith("/static/"):
         return
-    routine = path in {"/child/live", "/parent/live"} or path.startswith("/health/")
+    # Polls (dashboards, health, pfSense once a minute) only at DEBUG: they would bury the rest.
+    routine = path in {"/child/live", "/parent/live"} or path.startswith(("/health/", "/firewall/"))
     log.log(
         logging.DEBUG if routine else logging.INFO,
         "request method=%s path=%s status=%d ms=%d ip=%s",
@@ -160,7 +161,7 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
         return HTMLResponse("Not found", status_code=404)
 
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-    for module in (auth, account, child, parent, api, health):
+    for module in (auth, account, child, parent, api, health, firewall):
         app.include_router(module.router)
     return app
 

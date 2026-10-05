@@ -19,6 +19,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.accounts import AccountError
+from app.audit import record_audit
 from app.config import ConfigError, config_path_from_env, load_config
 from app.context import AppContext, build_context
 from app.models import SESSION_ACTIVE, AuditEvent, DayLock, ParentOverride, SessionRecord
@@ -293,6 +294,21 @@ def cmd_user_enable(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     return 0
 
 
+def cmd_firewall_token_rotate(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
+    from app.firewall import token
+
+    value = token.rotate(ctx.config.storage.data_dir)
+    with ctx.db.session(write=True) as session:
+        record_audit(session, ctx.clock.now(), OPERATOR, "firewall_token_rotated", "pfsense")
+    out("New pfSense token (shown once; only its SHA-256 is stored here):")
+    out("")
+    out(f"  {value}")
+    out("")
+    out("Put it in pfSense's /usr/local/etc/screentime-pull.conf as TOKEN=... (Diagnostics >")
+    out("Edit File), never in Execute Shell Command. The old token stopped working just now.")
+    return 0
+
+
 def cmd_reconcile(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     async def run() -> int:
         try:
@@ -376,6 +392,12 @@ def build_parser() -> argparse.ArgumentParser:
         p = user.add_parser(name, help=text)
         p.add_argument("username")
         p.set_defaults(func=cmd_user_enable, enable=enable)
+    fw = sub.add_parser("firewall-token", help="the token pfSense uses to fetch").add_subparsers(
+        dest="token_command", required=True
+    )
+    fw.add_parser("rotate", help="create a new token and print it once").set_defaults(
+        func=cmd_firewall_token_rotate
+    )
     p = sub.add_parser("reconcile", help="publish the desired firewall state now")
     p.add_argument("--education", action="store_true", help="also refresh the education allowlist")
     p.set_defaults(func=cmd_reconcile)

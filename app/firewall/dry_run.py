@@ -29,7 +29,8 @@ class DryRunFirewallAdapter:
         self.calls: list[tuple[str, ...]] = []
         self.fail_all = False
         self.fail_ops: set[str] = set()
-        # False simulates a firewall that has stopped applying (and acknowledging) publications.
+        # False simulates a firewall that still fetches but no longer applies or acknowledges
+        # (fail_all simulates one that cannot be reached at all).
         self.acknowledge = True
         self._applied: AppliedState | None = None
 
@@ -71,7 +72,7 @@ class DryRunFirewallAdapter:
 
     async def health(self) -> FirewallHealth:
         self.calls.append(("health",))
-        if self.fail_all or "health" in self.fail_ops or not self.acknowledge:
+        if self.fail_all or "health" in self.fail_ops:
             return FirewallHealth(ok=False, detail="dry-run injected failure")
         return FirewallHealth(ok=True, detail="dry-run")
 

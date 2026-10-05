@@ -27,6 +27,7 @@ from app.firewall.base import FirewallAdapter
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.firewall.generations import DbGenerations
 from app.firewall.pfsense_ssh import PfSenseSshFirewallAdapter
+from app.firewall.pull import PullFirewallAdapter
 from app.firewall.resolver import DnsClient, EducationResolver
 from app.models import FirewallEvent, WebSession
 from app.notifications import Notifier
@@ -59,6 +60,7 @@ class AppContext:
     auth: AuthService
     accounts: AccountService
     scheduler: Scheduler
+    pull: PullFirewallAdapter | None  # set in pfsense_pull mode: the /firewall/v1 routes use it
     action_limiter: SlidingWindowLimiter
     monitor: ResourceMonitor
 
@@ -100,15 +102,18 @@ def build_context(
 
     if adapter is None:
         generations = DbGenerations(db)
-        adapter = (
-            PfSenseSshFirewallAdapter(
+        if config.firewall.mode == "pfsense_pull":
+            adapter = PullFirewallAdapter(
+                db, clock, generations, config.firewall.degraded_after_seconds
+            )
+        elif config.firewall.mode == "pfsense_ssh":
+            adapter = PfSenseSshFirewallAdapter(
                 config.firewall,
                 control_dir=config.storage.data_dir / "ssh-mux",
                 generations=generations,
             )
-            if config.firewall.mode == "pfsense_ssh"
-            else DryRunFirewallAdapter(generations)
-        )
+        else:
+            adapter = DryRunFirewallAdapter(generations)
     firewall = AuditedFirewall(adapter, db, clock, config.firewall.mode)
 
     public_key: str | None = None
@@ -163,6 +168,7 @@ def build_context(
         orchestrator=orchestrator,
         auth=auth,
         accounts=accounts,
+        pull=adapter if isinstance(adapter, PullFirewallAdapter) else None,
         scheduler=None,  # type: ignore[arg-type]  # assigned below (needs ctx.maintenance)
         action_limiter=SlidingWindowLimiter(config.security.grant_actions_per_minute),
         monitor=monitor,

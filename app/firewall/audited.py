@@ -41,6 +41,7 @@ class AuditedFirewall:
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
         self.last_generation: int | None = None
+        self._health_ok = True
 
     def _store(self, action: str, target: str, ok: bool, started: float, error: str) -> None:
         elapsed = int((time.monotonic() - started) * 1000)
@@ -121,8 +122,11 @@ class AuditedFirewall:
             self.last_success_at = self._clock.now()
             self.last_error = None
         else:
+            # Stored once per outage: health is checked on every publication.
+            if self._health_ok:
+                await run_sync(self._store, "health", "", False, started, result.detail)
             self.last_error, self.last_error_at = result.detail, self._clock.now()
-            await run_sync(self._store, "health", "", False, started, result.detail)
+        self._health_ok = result.ok
         return result
 
     async def replace_education_ips(self, ips: set[str]) -> None:

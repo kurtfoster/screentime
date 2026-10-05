@@ -96,9 +96,9 @@ class Orchestrator:
         await self._publish_quietly()
 
     async def _degraded_gate(self, actor: str) -> CommandResult | None:
-        if not self.enforcement.degraded:
-            return None
-        await self._publish_quietly()  # one quick attempt to recover before refusing
+        # Publishing re-checks the firewall's health, so the decision is current: a recovery
+        # since the last periodic check is seen, and so is pfSense having stopped fetching.
+        await self._publish_quietly()
         if not self.enforcement.degraded:
             return None
         await run_sync(self._audit_denied, actor, "session_rejected", Reason.ENFORCEMENT_DEGRADED)

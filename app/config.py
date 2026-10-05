@@ -156,7 +156,9 @@ class ServiceCfg(_Strict):
 
 
 class FirewallCfg(_Strict):
-    mode: Literal["dry_run", "pfsense_ssh"] = "dry_run"
+    mode: Literal["dry_run", "pfsense_ssh", "pfsense_pull"] = "dry_run"
+    # pfSense's LAN address: in pfsense_pull mode the only source allowed to fetch the
+    # desired state and acknowledge it (nginx enforces the same address).
     host: str = "192.168.12.1"
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str = "screentime"
@@ -178,6 +180,8 @@ class FirewallCfg(_Strict):
     # A started session that the firewall has not acknowledged within this time is ended
     # and refunded (plan 5.1): the child is never charged for Internet that did not turn on.
     ack_timeout_seconds: int = Field(default=150, ge=60, le=900)
+    # No fetch from pfSense for this long: "not checking in"; new child starts are refused.
+    degraded_after_seconds: int = Field(default=180, ge=60, le=3600)
     education_dns_refresh_seconds: int = Field(default=300, ge=30, le=86400)
     include_ipv6_in_education: bool = True
 
@@ -327,6 +331,14 @@ class AppConfig(_Strict):
         for key in value:
             if not _ID_RE.match(key):
                 raise ValueError(f"id {key!r} must be lowercase letters, digits or underscores")
+        return value
+
+    @field_validator("devices")
+    @classmethod
+    def _device_ids_fit_the_firewall_protocol(cls, value: dict[str, Any]) -> dict[str, Any]:
+        for key in value:
+            if len(key) > 32:
+                raise ValueError(f"device id {key!r} is longer than 32 characters (pfSense map)")
         return value
 
     @model_validator(mode="after")

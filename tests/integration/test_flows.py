@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from app.models import (
@@ -171,8 +172,18 @@ def test_education_traffic_does_not_need_a_session(app_env: AppEnv) -> None:
 # --- fail closed ---------------------------------------------------------------------------
 
 
-def test_firewall_failure_means_no_grant_and_no_charge(app_env: AppEnv, child8: Session) -> None:
-    app_env.firewall.fail_ops = {"publish"}
+def test_firewall_failure_means_no_grant_and_no_charge(
+    app_env: AppEnv, child8: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original, calls = app_env.firewall.publish, []
+
+    async def healthy_then_failing(desired):  # type: ignore[no-untyped-def]
+        calls.append(desired)
+        if len(calls) > 1:  # the health check before the start passes; the grant fails
+            app_env.firewall.fail_ops = {"publish"}
+        return await original(desired)
+
+    monkeypatch.setattr(app_env.firewall, "publish", healthy_then_failing)
     resp = start(child8, "ipad", 30)
     assert resp.status_code == 503 and resp.json()["reason"] == "ENFORCEMENT_FAILED"
     assert app_env.firewall.active == set()

@@ -108,7 +108,11 @@ class EnforcementService:
                 await self._mark_degraded(str(exc), now)
                 raise
             self.record_applied(await self.firewall.applied(), now)
-            await self._mark_healthy(now)
+            health = await self.firewall.health()
+            if health.ok:
+                await self._mark_healthy(now)
+            else:
+                await self._mark_degraded(health.detail, now)
             return PublishResult(generation, desired)
 
     def record_applied(self, applied: AppliedState | None, now: datetime) -> None:

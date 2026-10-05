@@ -21,6 +21,7 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WHEELHOUSE=""
 DEPS=""
 NTP_SERVER=192.168.12.1
+FIREWALL_HOST=192.168.12.1
 BACKUP_DEST=/mnt/screentime-backup
 BOOT_CONFIG=/boot/firmware/config.txt
 BOOT_CONFIG_EXPLICIT=0
@@ -52,6 +53,7 @@ Usage: install.sh [options]
   --wheelhouse DIR     pip: install dependencies offline from DIR; apt: add these wheels
                        on top (fallback for a package with no ARMv6-safe build)
   --ntp-server ADDR    first NTP server for systemd-timesyncd (default $NTP_SERVER, pfSense)
+  --firewall-host ADDR pfSense's LAN address, the only client of /firewall/ (default $FIREWALL_HOST)
   --backup-dest DIR    mounted USB drive for nightly backups (default $BACKUP_DEST)
   --boot-config FILE   Raspberry Pi firmware config (default $BOOT_CONFIG)
   --no-tls             do not generate certificates (you will supply them)
@@ -77,6 +79,7 @@ while [ $# -gt 0 ]; do
         --wheelhouse) WHEELHOUSE=$2; shift 2 ;;
         --deps) DEPS=$2; shift 2 ;;
         --ntp-server) NTP_SERVER=$2; shift 2 ;;
+        --firewall-host) FIREWALL_HOST=$2; shift 2 ;;
         --backup-dest) BACKUP_DEST=$2; shift 2 ;;
         --boot-config) BOOT_CONFIG=$2; BOOT_CONFIG_EXPLICIT=1; shift 2 ;;
         --no-tls) NO_TLS=1; shift ;;
@@ -97,6 +100,9 @@ case "$DEPS" in
     ""|apt|pip) ;;
     *) echo "--deps must be apt or pip" >&2; exit 64 ;;
 esac
+# Written into the nginx configuration, so it must be exactly an IPv4 address.
+[[ "$FIREWALL_HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] ||
+    { echo "--firewall-host must be an IPv4 address" >&2; exit 64; }
 
 APP_DIR="$PREFIX/app"
 CONFIG_DIR="$PREFIX/config"
@@ -341,6 +347,7 @@ if [ "$NO_NGINX" -eq 0 ]; then
             echo "[dry-run] render nginx-screen.conf -> $site"
         else
             sed -e "s|@HOSTNAME@|$HOSTNAME_FQDN|g" -e "s|@TLS_DIR@|$TLS_DIR|g" \
+                -e "s|@FIREWALL_HOST@|$FIREWALL_HOST|g" \
                 "$APP_DIR/deploy/nginx-screen.conf" > "$site"
             chmod 0644 "$site"
         fi

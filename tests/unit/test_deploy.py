@@ -516,6 +516,7 @@ def test_installer_renders_nginx_placeholders(tmp_path: Path) -> None:
         .read_text()
         .replace("@HOSTNAME@", "screen.home.arpa")
         .replace("@TLS_DIR@", "/etc/screentime/tls")
+        .replace("@FIREWALL_HOST@", "192.168.12.1")
     )
     assert "@" not in re.sub(r"'[^']*'", "", rendered)
     assert "ssl_certificate     /etc/screentime/tls/screen-fullchain.crt;" in rendered
@@ -645,3 +646,19 @@ def test_smoke_test_passes_here() -> None:
     res = sh(sys.executable, ROOT / "scripts" / "smoke_test.py")
     assert res.returncode == 0, res.stdout + res.stderr
     assert "Smoke test passed." in res.stdout and "argon2id hash and verify ... ok" in res.stdout
+
+
+def test_only_pfsense_reaches_the_firewall_location() -> None:
+    conf = (DEPLOY / "nginx-screen.conf").read_text()
+    block = conf[conf.index("location /firewall/ {") :]
+    block = block[: block.index("}")]
+    assert "allow @FIREWALL_HOST@;" in block and "deny all;" in block
+    assert block.index("allow @FIREWALL_HOST@;") < block.index("deny all;")
+    assert "limit_req zone=screentime_firewall" in block and "client_max_body_size 4k;" in block
+    assert "zone=screentime_firewall:1m" in conf
+
+
+@pytest.mark.parametrize("bad", ["192.168.12.1; allow all", "pfsense.home.arpa", "", "1.2.3"])
+def test_the_firewall_host_must_be_an_ipv4_address(tmp_path: Path, bad: str) -> None:
+    res = install(tmp_path / "opt", "--firewall-host", bad)
+    assert res.returncode == 64 and "IPv4" in res.stderr

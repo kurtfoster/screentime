@@ -63,7 +63,7 @@ class AppEnv:
     ctx: AppContext
     client: TestClient
     clock: FakeClock
-    firewall: DryRunFirewallAdapter
+    firewall: Any  # the DryRunFirewallAdapter, or the real adapter in pfsense_pull mode
     dns: FakeDns
     push: FakePush
     tmp_path: Path
@@ -130,7 +130,7 @@ def open_env(
     overrides.setdefault("notifications", {"browser_push_enabled": True, "warning_minutes": 5})
     config = make_config(tmp_path, **overrides)
     clock = FakeClock(at(start_hour, start_minute))
-    firewall = DryRunFirewallAdapter()
+    firewall = DryRunFirewallAdapter() if config.firewall.mode == "dry_run" else None
     dns, push = FakeDns(), FakePush()
     ctx = build_context(
         config,
@@ -143,7 +143,7 @@ def open_env(
     seed_accounts(ctx.db, config, hashes)
     app = create_app(ctx, run_background=False)
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
-        yield AppEnv(ctx, client, clock, firewall, dns, push, tmp_path)
+        yield AppEnv(ctx, client, clock, firewall or ctx.firewall.inner, dns, push, tmp_path)
 
 
 @pytest.fixture
