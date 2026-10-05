@@ -4,6 +4,8 @@ Cookies carry a random token plus an HMAC; only a SHA-256 of the token is stored
 database leak does not yield usable sessions. Each login rotates the session. Failed
 logins lock a child account for a period, and a parent can reset it; the parent account
 is throttled per source address instead so a child cannot lock a parent out.
+
+Accounts and their Argon2id hashes live in the ``users`` table (app.accounts).
 """
 
 from __future__ import annotations
@@ -17,13 +19,15 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.orm import Session
 
+from app.accounts import Account, load_account
 from app.audit import record_audit
 from app.clock import Clock
-from app.config import AppConfig, UserCfg
+from app.config import PASSWORD_MAX_LENGTH, AppConfig
 from app.db import Database
-from app.models import LoginFailure, WebSession
+from app.models import LoginFailure, User, WebSession
 from app.passwords import PasswordHashing
 from app.secrets_store import derive_key
 
@@ -77,13 +81,11 @@ class AuthService:
         self,
         db: Database,
         config: AppConfig,
-        users: dict[str, UserCfg],
         clock: Clock,
         secret: bytes,
     ) -> None:
         self._db = db
         self._cfg = config
-        self._users = users
         self._clock = clock
         self._cookie_key = derive_key(secret, "session-cookie")
         self._login_key = derive_key(secret, "login-csrf")
@@ -126,28 +128,41 @@ class AuthService:
         age = self._clock.now().timestamp() - int(parts[1])
         return 0 <= age <= max_age_seconds
 
+    # -- accounts -------------------------------------------------------------------
+
+    def _account(self, username: str) -> Account | None:
+        """The enabled account called ``username``; disabled accounts cannot sign in."""
+        with self._db.session() as session:
+            account = load_account(session, self._cfg, username)
+        return account if account is not None and account.enabled else None
+
     # -- lockouts ---------------------------------------------------------------------
 
-    def _failure_key(self, username: str, client_ip: str) -> str:
-        user = self._users.get(username)
-        if user is None:
+    @staticmethod
+    def _failure_key(username: str, client_ip: str, account: Account | None) -> str:
+        if account is None:
             return f"unknown:{client_ip}"[:96]  # bounded: one row per address, never per guess
-        if user.role == "parent":
+        if account.is_parent:
             return f"parent:{username}:{client_ip}"[:96]
         return f"user:{username}"[:96]
 
-    def lockout_for(self, username: str, client_ip: str) -> datetime | None:
+    def lockout_for(
+        self, username: str, client_ip: str, account: Account | None = None
+    ) -> datetime | None:
         now = self._clock.now()
+        account = account or self._account(username)
         with self._db.session() as session:
-            row = session.get(LoginFailure, self._failure_key(username, client_ip))
+            row = session.get(LoginFailure, self._failure_key(username, client_ip, account))
             if row is not None and row.locked_until is not None and row.locked_until > now:
                 return row.locked_until
         return None
 
-    def _register_failure(self, username: str, client_ip: str) -> datetime | None:
+    def _register_failure(
+        self, username: str, client_ip: str, account: Account | None
+    ) -> datetime | None:
         sec = self._cfg.security
         now = self._clock.now()
-        key = self._failure_key(username, client_ip)
+        key = self._failure_key(username, client_ip, account)
         with self._db.session(write=True) as session:
             row = session.get(LoginFailure, key)
             if row is None:
@@ -172,11 +187,21 @@ class AuthService:
                 )
             return row.locked_until
 
-    def _clear_failures(self, username: str, client_ip: str) -> None:
+    def _clear_failures(self, username: str, client_ip: str, account: Account | None) -> None:
         with self._db.session(write=True) as session:
-            row = session.get(LoginFailure, self._failure_key(username, client_ip))
+            row = session.get(LoginFailure, self._failure_key(username, client_ip, account))
             if row is not None:
                 session.delete(row)
+
+    @staticmethod
+    def clear_lockouts(session: Session, username: str) -> None:
+        """Every lockout of ``username``: the child's own, or the parent's per-address ones."""
+        session.execute(
+            delete(LoginFailure).where(
+                (LoginFailure.key == f"user:{username}"[:96])
+                | LoginFailure.key.like(f"parent:{username}:%")
+            )
+        )
 
     def locked_children(self) -> list[tuple[str, datetime]]:
         """Child accounts currently locked out, for the parental reset control."""
@@ -203,57 +228,102 @@ class AuthService:
     def verify_child_credentials(self, child_id: str, password: str, client_ip: str) -> bool:
         """Check a child's password (e.g. sibling joining a TV). Failures count toward lockout."""
         username = self._cfg.children[child_id].username
-        user = self._users.get(username)
-        if self.lockout_for(username, client_ip) is not None:
+        account = self._account(username)
+        if account is not None and account.child_id != child_id:
+            account = None
+        return self.verify_password(username, password, client_ip, account)
+
+    def verify_password(
+        self, username: str, password: str, client_ip: str, account: Account | None = None
+    ) -> bool:
+        """Check a password for an account without signing in (sibling checks, re-authentication).
+
+        A locked account fails without a verify. Failures count toward the lockout, exactly as
+        a failed login does, so this cannot be used to guess around it.
+        """
+        if account is None:
+            account = self._account(username)
+        if self.lockout_for(username, client_ip, account) is not None:
             return False
-        ok = self.passwords.verify(user.password_hash if user else None, password)
-        if ok:
-            self._clear_failures(username, client_ip)
+        ok = self.passwords.verify(account.password_hash if account else None, password)
+        if ok and account is not None:
+            self._clear_failures(username, client_ip, account)
+            self._rehash_if_needed(account, password)
         else:
-            self._register_failure(username, client_ip)
+            self._register_failure(username, client_ip, account)
         return ok
+
+    def _rehash_if_needed(self, account: Account, password: str) -> None:
+        """Bring a hash made with other Argon2 parameters up to ``security.password_hash``."""
+        if not self.passwords.needs_rehash(account.password_hash):
+            return
+        new_hash = self.passwords.hash(password)
+        with self._db.session(write=True) as session:
+            session.execute(
+                update(User)
+                .where(
+                    User.username == account.username,
+                    User.password_hash == account.password_hash,  # not if it changed meanwhile
+                )
+                .values(password_hash=new_hash)
+            )
+            record_audit(
+                session, self._clock.now(), "system", "password_rehashed", account.username
+            )
 
     # -- login / sessions -------------------------------------------------------------
 
     def login(self, username: str, password: str, client_ip: str) -> LoginResult:
         username = username.strip().lower()[:32]
-        now = self._clock.now()
-        locked = self.lockout_for(username, client_ip)
+        account = self._account(username)
+        locked = self.lockout_for(username, client_ip, account)
         if locked is not None:
             self._audit_login(username, "denied", client_ip, "locked")
             return LoginResult(
                 False, message="Too many attempts. Ask a parent to unlock you.", locked_until=locked
             )
-        user = self._users.get(username)
-        valid = self.passwords.verify(user.password_hash if user else None, password)
-        if user is None or not valid:
-            locked = self._register_failure(username, client_ip)
+        valid = len(password) <= PASSWORD_MAX_LENGTH and self.passwords.verify(
+            account.password_hash if account else None, password
+        )
+        if account is None or not valid:
+            locked = self._register_failure(username, client_ip, account)
             self._audit_login(username, "denied", client_ip, "bad credentials")
             return LoginResult(
                 False, message="That username or password is not right.", locked_until=locked
             )
-        self._clear_failures(username, client_ip)
+        self._clear_failures(username, client_ip, account)
+        self._rehash_if_needed(account, password)
+        cookie, principal = self.issue_session(account, client_ip, event="login")
+        return LoginResult(True, cookie=cookie, principal=principal)
+
+    def issue_session(
+        self, account: Account, client_ip: str, *, event: str
+    ) -> tuple[str, Principal]:
+        """A new server-side session (rotation: a fresh id every time). Returns the cookie.
+
+        Older sessions for this user stay valid only until their own expiry (a child may use
+        several devices), unless a password change revoked them.
+        """
+        now = self._clock.now()
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(24)
         expires = now + timedelta(minutes=self._cfg.security.session_ttl_minutes)
         with self._db.session(write=True) as session:
-            # Rotation: a fresh session id on every login; older ones for this user stay valid
-            # only until their own expiry (a child may use several devices).
             session.execute(delete(WebSession).where(WebSession.expires_at < now))
             session.add(
                 WebSession(
                     token_hash=self._hash_token(token),
-                    username=username,
-                    role=user.role,
-                    child_id=user.child_id,
+                    username=account.username,
+                    role=account.role,
+                    child_id=account.child_id,
                     csrf_token=csrf,
                     created_at=now,
                     expires_at=expires,
                 )
             )
-            record_audit(session, now, username, "login", username, ip=client_ip)
-        principal = Principal(username, user.role, user.child_id, csrf)
-        return LoginResult(True, cookie=self._sign(token), principal=principal)
+            record_audit(session, now, account.username, event, account.username, ip=client_ip)
+        principal = Principal(account.username, account.role, account.child_id, csrf)
+        return self._sign(token), principal
 
     def _audit_login(self, username: str, result: str, ip: str, why: str) -> None:
         with self._db.session(write=True) as session:
@@ -279,8 +349,8 @@ class AuthService:
             row = session.get(WebSession, self._hash_token(token))
             if row is None or row.expires_at <= now:
                 return None
-            user = self._users.get(row.username)
-            if user is None or user.role != row.role:
+            user = session.scalars(select(User).where(User.username == row.username)).first()
+            if user is None or not user.enabled or user.role != row.role:
                 return None
             return Principal(row.username, row.role, row.child_id, row.csrf_token)
 
@@ -295,6 +365,6 @@ class AuthService:
                 delete(WebSession).where(WebSession.token_hash == self._hash_token(token))
             )
 
-    def revoke_all_for(self, username: str) -> None:
-        with self._db.session(write=True) as session:
-            session.execute(delete(WebSession).where(WebSession.username == username))
+    @staticmethod
+    def revoke_sessions(session: Session, username: str) -> None:
+        session.execute(delete(WebSession).where(WebSession.username == username))

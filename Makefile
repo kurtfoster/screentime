@@ -29,15 +29,15 @@ fmt:             ## apply formatting and safe lint fixes
 e2e:             ## browser tests only
 	$(PY) -m pytest -q -m e2e
 
-dev-users:       ## write config/users.dev.yaml with throwaway passwords
-	$(PY) scripts/make_dev_users.py
+dev-users:       ## seed the development database with throwaway logins
+	SCREENTIME_CONFIG=config/config.dev.yaml $(PY) scripts/make_dev_users.py
 
 run:             ## run the app locally in dry-run mode on http://127.0.0.1:8080
-	SCREENTIME_CONFIG=config/config.dev.yaml SCREENTIME_USERS=config/users.dev.yaml \
+	SCREENTIME_CONFIG=config/config.dev.yaml \
 	$(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8080
 
 check-config:    ## validate the development configuration
-	SCREENTIME_CONFIG=config/config.dev.yaml SCREENTIME_USERS=config/users.dev.yaml $(PY) -m app --check-config
+	SCREENTIME_CONFIG=config/config.dev.yaml $(PY) -m app --check-config
 
 clean:           ## remove caches and coverage output
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov coverage.xml .coverage

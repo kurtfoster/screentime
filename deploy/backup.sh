@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Consistent backup of the Screen-Time Controller: SQLite database (WAL-safe, via the SQLite
-# online-backup API), configuration YAML and application secrets, in one 0600 tarball.
+# online-backup API, and holding the login accounts and their password hashes), config.yaml
+# and application secrets, in one 0600 tarball.
 #
 #   deploy/backup.sh [--prefix DIR] [--dest DIR] [--keep N] [--python PATH] [--allow-unmounted]
 #
@@ -124,9 +125,7 @@ if result != "ok":
     sys.exit(f"integrity check failed on the backup copy: {result}")
 PY
 
-for f in config.yaml users.yaml; do
-    [ -e "$CONFIG_DIR/$f" ] && cp -p "$CONFIG_DIR/$f" "$WORK/screentime-backup/config/$f"
-done
+[ -e "$CONFIG_DIR/config.yaml" ] && cp -p "$CONFIG_DIR/config.yaml" "$WORK/screentime-backup/config/config.yaml"
 for f in secret.key vapid_private.pem; do
     [ -e "$DATA_DIR/$f" ] && cp -p "$DATA_DIR/$f" "$WORK/screentime-backup/data/$f"
 done

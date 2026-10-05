@@ -1,7 +1,6 @@
 # Local development configuration: dry-run firewall, HTTP cookies, data under ./data.
-# Run with:  SCREENTIME_CONFIG=config/config.dev.yaml SCREENTIME_USERS=config/users.dev.yaml \
-#            .venv/bin/uvicorn app.main:app --port 8080
-# Create users.dev.yaml (gitignored pattern: config/users.yaml) with scripts/make_dev_users.py.
+# Run with:  SCREENTIME_CONFIG=config/config.dev.yaml .venv/bin/uvicorn app.main:app --port 8080
+# Seed throwaway logins into ./data first:  .venv/bin/python scripts/make_dev_users.py
 timezone: Australia/Melbourne
 logical_day_reset: "02:00"
 
@@ -40,7 +39,6 @@ notifications:
 
 security:
   secure_cookies: false
-  enforce_file_modes: false
 
 storage:
   data_dir: ./data

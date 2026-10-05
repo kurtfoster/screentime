@@ -46,7 +46,11 @@ class Meta(Base):
 
 
 class User(Base):
-    """Identity mirror of users.yaml. Password hashes deliberately stay in the YAML file."""
+    """Login accounts; authoritative for usernames, roles and Argon2id password hashes.
+
+    An empty ``password_hash`` means "no password set yet": every configured child has a row
+    from the first start, and a parent sets the password from the dashboard.
+    """
 
     __tablename__ = "users"
 
@@ -55,6 +59,10 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16))
     child_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(255), default="")
+    password_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    password_changed_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class Device(Base):

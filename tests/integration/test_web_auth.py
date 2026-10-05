@@ -101,7 +101,7 @@ def test_cookie_flags_and_rotation(app_env: AppEnv) -> None:
 
 
 def test_secure_cookie_flag_follows_config(env_factory) -> None:  # type: ignore[no-untyped-def]
-    env = env_factory(security={"secure_cookies": True, "enforce_file_modes": False})
+    env = env_factory(security={"secure_cookies": True})
     resp = attempt(env.client, "child8", PASSWORDS["child8"])
     assert "secure" in resp.headers["set-cookie"].lower()
 

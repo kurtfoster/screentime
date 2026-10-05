@@ -62,7 +62,6 @@ for f in secret.key vapid_private.pem; do
     [ -e "$SRC/data/$f" ] && place "$SRC/data/$f" "$DATA_DIR/$f" 0600
 done
 [ -e "$SRC/config/config.yaml" ] && place "$SRC/config/config.yaml" "$CONFIG_DIR/config.yaml" 0640
-[ -e "$SRC/config/users.yaml" ] && place "$SRC/config/users.yaml" "$CONFIG_DIR/users.yaml" 0600
 
 if [ "$(id -u)" -eq 0 ] && id "$SERVICE_USER" >/dev/null 2>&1; then
     chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$CONFIG_DIR"

@@ -18,13 +18,12 @@ import uvicorn
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from app.clock import FakeClock
-from app.config import UserCfg
 from app.context import AppContext, build_context
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.main import create_app
 from app.passwords import hash_password
 from app.timers import Scheduler
-from tests.conftest import at, make_config
+from tests.conftest import at, make_config, seed_accounts
 
 PASSWORDS = {"child8": "e2e-child8-pw", "child12": "e2e-child12-pw", "parents": "e2e-parents-pw"}
 
@@ -71,14 +70,10 @@ def live_app(tmp_path: Path, hashes: dict[str, str]) -> Iterator[LiveApp]:
         # These tests exercise flows, not the production polling cadence (15 s when idle).
         ui={"poll_fast_seconds": 2, "poll_idle_seconds": 3},
     )
-    users = {
-        "child8": UserCfg(role="child", child_id="child8", password_hash=hashes["child8"]),
-        "child12": UserCfg(role="child", child_id="child12", password_hash=hashes["child12"]),
-        "parents": UserCfg(role="parent", password_hash=hashes["parents"]),
-    }
     clock = FakeClock(at(10, 0))
     firewall = DryRunFirewallAdapter()
-    ctx = build_context(config, users, adapter=firewall, clock=clock, dns=_NoDns())  # type: ignore[arg-type]
+    ctx = build_context(config, adapter=firewall, clock=clock, dns=_NoDns())  # type: ignore[arg-type]
+    seed_accounts(ctx.db, config, hashes)
     ctx.scheduler = Scheduler(
         ctx.orchestrator,
         ctx.resolver,

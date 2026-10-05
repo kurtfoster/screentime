@@ -7,8 +7,8 @@
 #   sudo deploy/install.sh --renew-tls     # reissue the server certificate
 #   deploy/install.sh --help
 #
-# Idempotent: safe to re-run for upgrades. It never overwrites config.yaml or users.yaml
-# unless you pass --overwrite-config and confirm.
+# Idempotent: safe to re-run for upgrades. It never overwrites config.yaml unless you pass
+# --overwrite-config and confirm. Logins live in the database: see the next steps it prints.
 
 set -euo pipefail
 
@@ -59,7 +59,7 @@ Usage: install.sh [options]
   --no-systemd         do not install systemd units
   --no-system          install files only: no user creation, no /etc, no nginx, no systemd
   --renew-tls          reissue the server certificate even if it is not near expiry
-  --overwrite-config   replace config.yaml/users.yaml with the examples (asks first)
+  --overwrite-config   replace config.yaml with the example (asks first)
   --yes                answer yes to confirmations
   --dry-run            print what would be done
   -h, --help           this text
@@ -103,6 +103,12 @@ CONFIG_DIR="$PREFIX/config"
 DATA_DIR="$PREFIX/data"
 SSH_DIR="$PREFIX/.ssh"
 VENV="$PREFIX/venv"
+
+# Every operator command in the printed next steps runs as the service account, from the app.
+AS_SERVICE="cd $APP_DIR && sudo -u $SERVICE_USER env SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml $VENV/bin/python"
+# A first install has no database yet; an upgrade re-run keeps it.
+FRESH_INSTALL=1
+[ -e "$DATA_DIR/screentime.db" ] && FRESH_INSTALL=0
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -196,7 +202,7 @@ else
     (cd "$SOURCE_DIR" && tar cf - \
         --exclude='__pycache__' --exclude='*.pyc' \
         app migrations scripts deploy alembic.ini pyproject.toml VERSION README.md OPERATIONS.md SECURITY.md \
-        config/config.example.yaml config/users.example.yaml config/config.dev.yaml) | (cd "$APP_DIR" && tar xf -)
+        config/config.example.yaml config/config.dev.yaml) | (cd "$APP_DIR" && tar xf -)
     chmod 0755 "$APP_DIR"/deploy/*.sh "$APP_DIR"/scripts/*.py 2>/dev/null || true
     # Precompile once, as root: the service runs with a read-only app directory and
     # PYTHONDONTWRITEBYTECODE=1, so otherwise every start recompiles every module (slow on a Pi 1).
@@ -266,14 +272,8 @@ install_config_file() {  # name example mode
 }
 
 install_config_file config.yaml config.example.yaml 0640
-if [ ! -e "$CONFIG_DIR/users.yaml" ] || [ "$OVERWRITE_CONFIG" -eq 1 ]; then
-    install_config_file users.yaml users.example.yaml 0600
-else
-    log "Keeping existing $CONFIG_DIR/users.yaml"
-fi
 if [ "$NO_SYSTEM" -eq 0 ]; then
-    run chown "$OWNER" "$CONFIG_DIR"/*.yaml
-    run chmod 0600 "$CONFIG_DIR/users.yaml"
+    run chown "$OWNER" "$CONFIG_DIR/config.yaml"
 fi
 
 # --- TLS: a private CA plus a server certificate for the LAN name -----------------------------
@@ -478,35 +478,51 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
     run systemctl daemon-reload
     run systemctl enable screentime.service screentime-backup.timer
     if [ "$DRY_RUN" -eq 0 ]; then
-        if (cd "$APP_DIR" && SCREENTIME_CONFIG="$CONFIG_DIR/config.yaml" SCREENTIME_USERS="$CONFIG_DIR/users.yaml" \
+        if (cd "$APP_DIR" && SCREENTIME_CONFIG="$CONFIG_DIR/config.yaml" \
             "$VENV/bin/python" -m app --check-config >/dev/null 2>&1); then
             systemctl restart screentime.service
             systemctl start screentime-backup.timer
             log "Service started"
         else
             warn "Configuration is not valid yet, so the service was NOT started."
-            warn "Edit $CONFIG_DIR/config.yaml and $CONFIG_DIR/users.yaml, then run:"
-            warn "  cd $APP_DIR && sudo -u $SERVICE_USER env SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml SCREENTIME_USERS=$CONFIG_DIR/users.yaml $VENV/bin/python -m app --check-config"
+            warn "Edit $CONFIG_DIR/config.yaml, then run:"
+            warn "  $AS_SERVICE -m app --check-config"
             warn "  sudo systemctl start screentime.service screentime-backup.timer"
         fi
     fi
 fi
 
-cat <<EOF
+if [ "$FRESH_INSTALL" -eq 1 ]; then
+    cat <<EOF
 
-Done. Next steps:
-  1. Edit $CONFIG_DIR/config.yaml (devices, allowances, pfSense address).
-  2. Create logins: $VENV/bin/python $APP_DIR/scripts/make_password_hash.py --config $CONFIG_DIR/config.yaml
-     and paste them into $CONFIG_DIR/users.yaml.
-  3. Validate:  cd $APP_DIR && sudo -u $SERVICE_USER env SCREENTIME_CONFIG=$CONFIG_DIR/config.yaml SCREENTIME_USERS=$CONFIG_DIR/users.yaml $VENV/bin/python -m app --check-config
-  4. Install http://$HOSTNAME_FQDN/ca.crt on each iPhone/iPad (see README) and add a pfSense
+Done. Next steps (fresh install; run each command on this Pi):
+  1. Edit the configuration (children, devices, allowances):
+       sudo nano $CONFIG_DIR/config.yaml
+  2. Validate it:
+       $AS_SERVICE -m app --check-config
+  3. Create each parent's own login (it asks for the password twice, without echo):
+       $AS_SERVICE scripts/admin_cli.py user add-parent <username> --name "<Name>"
+  4. Set each child's password (the username is children.<id>.username in config.yaml),
+     or later from the parent dashboard:
+       $AS_SERVICE scripts/admin_cli.py user set-password <child username>
+  5. Start the service and the nightly backup:
+       sudo systemctl restart screentime.service && sudo systemctl start screentime-backup.timer
+  6. Install http://$HOSTNAME_FQDN/ca.crt on each iPhone/iPad (see README) and add a pfSense
      DNS host override for $HOSTNAME_FQDN pointing at this Pi.
 EOF
+else
+    cat <<EOF
+
+Done (upgrade). Check the accounts and the service:
+  $AS_SERVICE scripts/admin_cli.py user list
+  systemctl status screentime.service --no-pager
+EOF
+fi
 if [ "$MACHINE" = armv6l ]; then
     cat <<EOF
 
 Raspberry Pi 1 / Zero: measure this CPU's password-check cost with
-  $VENV/bin/python $APP_DIR/scripts/make_password_hash.py --calibrate
+  $AS_SERVICE -m app --calibrate-hash
 and see the full resource benchmark in OPERATIONS.md.
 EOF
 fi

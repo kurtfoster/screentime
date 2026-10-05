@@ -280,7 +280,6 @@ def test_background_scheduler_drives_the_real_app(env_factory) -> None:  # type:
     from fastapi.testclient import TestClient
 
     from app.clock import FakeClock
-    from app.config import UserCfg
     from app.context import build_context
     from app.main import create_app
     from app.timers import Scheduler as Sched
@@ -289,18 +288,9 @@ def test_background_scheduler_drives_the_real_app(env_factory) -> None:  # type:
     env = env_factory()
     assert env  # keeps the shared fixtures exercised
     config = make_config(env.tmp_path / "bg")
-    users = {
-        "child8": UserCfg(
-            role="child", child_id="child8", password_hash=env.ctx.users["child8"].password_hash
-        ),
-        "child12": UserCfg(
-            role="child", child_id="child12", password_hash=env.ctx.users["child12"].password_hash
-        ),
-        "parents": UserCfg(role="parent", password_hash=env.ctx.users["parents"].password_hash),
-    }
     clock = FakeClock(at(10))
     fw = DryRunFirewallAdapter()
-    ctx = build_context(config, users, adapter=fw, clock=clock, dns=env.dns, push_sender=env.push)  # type: ignore[arg-type]
+    ctx = build_context(config, adapter=fw, clock=clock, dns=env.dns, push_sender=env.push)  # type: ignore[arg-type]
     ctx.scheduler = Sched(
         ctx.orchestrator,
         ctx.resolver,
@@ -345,8 +335,12 @@ def test_database_runs_in_wal_mode_with_foreign_keys(app_env: AppEnv) -> None:
 
 
 def test_migrations_tolerate_a_restored_database_from_a_previous_release(tmp_path: Path) -> None:
+    from alembic import command
+
+    from app.db import alembic_config
+
     db = Database(tmp_path / "old.db")
-    db.upgrade()
+    command.upgrade(alembic_config(db.url), "0001")  # the v1.1 schema
     with db.session(write=True) as s:
         s.execute(
             text(
@@ -354,14 +348,21 @@ def test_migrations_tolerate_a_restored_database_from_a_previous_release(tmp_pat
                 "VALUES ('2026-01-01 00:00:00', 'parents', 'grant', 'child8', 'ok', '{}')"
             )
         )
+        s.execute(
+            text(
+                "INSERT INTO users (username, role, child_id, enabled) VALUES ('child8', 'child', 'child8', 1)"
+            )
+        )
     db.dispose()
     # A restore brings back the file as it was; startup must upgrade in place and keep the data.
     restored = Database(tmp_path / "old.db")
     upgrade_to_head(restored.url)
     upgrade_to_head(restored.url)  # idempotent
-    assert current_revision(restored) == "0001"
+    assert current_revision(restored) == "0002"
     with restored.session() as s:
         assert s.execute(text("SELECT count(*) FROM audit_events")).scalar_one() == 1
+        # 0002: an existing account gains an empty hash, i.e. "no password set".
+        assert s.execute(text("SELECT password_hash FROM users")).scalar_one() == ""
 
 
 def test_current_revision_of_an_uninitialised_database_is_none(tmp_path: Path) -> None:

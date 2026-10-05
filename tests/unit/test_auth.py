@@ -13,9 +13,15 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from app.config import PasswordHashCfg, argon2_parameters, hash_cost_problem
+from app.config import PasswordHashCfg
 from app.passwords import PasswordHashing, hash_password, verify_password
 from tests.conftest import ARGON_HASH, BASE_CONFIG
+
+
+def argon2_parameters(stored_hash: str) -> tuple[int, int, int]:
+    params = dict(part.split("=") for part in stored_hash.split("$")[3].split(","))
+    return int(params["m"]), int(params["t"]), int(params["p"])
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -92,62 +98,37 @@ def test_verification_is_serialised_across_threads(monkeypatch: pytest.MonkeyPat
     assert peak == 1
 
 
-def test_hash_cost_advice() -> None:
-    budget = PasswordHashCfg()
-    assert "above the configured budget" in (hash_cost_problem(budget, ARGON_HASH) or "")
-    assert hash_cost_problem(budget, hash_password("pw-123456")) is None
-    strong = PasswordHashCfg(memory_kib=65536, time_cost=3)
-    assert "below the configured minimum" in (
-        hash_cost_problem(strong, hash_password("pw1234")) or ""
-    )
-    assert hash_cost_problem(budget, "not-a-hash") is None
+def test_needs_rehash_follows_the_configured_parameters() -> None:
+    hashing = PasswordHashing()
+    assert not hashing.needs_rehash(hash_password("pw-123456"))
+    assert hashing.needs_rehash(ARGON_HASH)  # v1.0 parameters: m=65536, t=3, p=4
+    assert not hashing.needs_rehash("not-a-hash")  # a broken hash is a failed login, not a crash
 
 
-def test_make_password_hash_uses_the_configured_parameters(tmp_path: Path) -> None:
-    raw = {**BASE_CONFIG, "security": {**BASE_CONFIG["security"]}}
-    raw["security"]["password_hash"] = {"memory_kib": 24576, "time_cost": 2, "parallelism": 1}
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(yaml.safe_dump(raw))
-    env = {k: v for k, v in os.environ.items() if k != "SCREENTIME_CONFIG"}
-    script = ROOT / "scripts" / "make_password_hash.py"
-    run = subprocess.run(
-        [sys.executable, script, "--stdin", "--config", cfg],
-        input="a long passphrase",
-        capture_output=True,
-        text=True,
-        env=env,
-        check=True,
-    )
-    stored = run.stdout.strip()
-    assert argon2_parameters(stored) == (24576, 2, 1)
-    assert verify_password(stored, "a long passphrase")
-    default = subprocess.run(
-        [sys.executable, script, "--stdin"],
-        input="another one",
-        capture_output=True,
-        text=True,
-        env=env,
-        check=True,
-    )
-    assert argon2_parameters(default.stdout.strip()) == (19456, 2, 1)
-    short = subprocess.run(
-        [sys.executable, script, "--stdin"],
-        input="abc",
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    assert short.returncode == 1
+def test_passwords_are_nfc_normalised() -> None:
+    composed, decomposed = "caf\u00e9-pw", "cafe\u0301-pw"  # é typed two different ways
+    assert composed != decomposed
+    assert verify_password(hash_password(composed), decomposed)
+    assert verify_password(hash_password(decomposed), composed)
+
+
+def test_an_empty_hash_costs_a_dummy_verify_and_never_matches() -> None:
+    """An account with no password set looks exactly like an unknown user."""
+    hashing = PasswordHashing()
+    assert hashing.verify("", "") is False
+    assert hashing._dummy is not None
 
 
 def test_calibrate_reports_each_candidate(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump(BASE_CONFIG))
     env = {k: v for k, v in os.environ.items() if k != "SCREENTIME_CONFIG"}
     run = subprocess.run(
-        [sys.executable, ROOT / "scripts" / "make_password_hash.py", "--calibrate"],
+        [sys.executable, "-m", "app", "--config", cfg, "--calibrate-hash"],
         capture_output=True,
         text=True,
         env=env,
+        cwd=ROOT,
         check=True,
         timeout=120,
     )

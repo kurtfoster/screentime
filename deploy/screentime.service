@@ -13,7 +13,6 @@ Group=screentime
 WorkingDirectory=/opt/screentime/app
 Environment=HOME=/opt/screentime
 Environment=SCREENTIME_CONFIG=/opt/screentime/config/config.yaml
-Environment=SCREENTIME_USERS=/opt/screentime/config/users.yaml
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Refuse to start (with a readable error in the journal) if the configuration is invalid.

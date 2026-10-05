@@ -1,8 +1,8 @@
 """FastAPI application factory.
 
 ``uvicorn app.main:app`` works because ``app`` is resolved lazily from the environment
-(``SCREENTIME_CONFIG`` / ``SCREENTIME_USERS``); invalid configuration therefore stops the
-service at startup with a clear message rather than serving half-configured.
+(``SCREENTIME_CONFIG``); invalid configuration therefore stops the service at startup with a
+clear message rather than serving half-configured.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.audit import configure_logging
-from app.config import ConfigError, config_paths_from_env, load_all
+from app.config import ConfigError, config_path_from_env, load_config
 from app.context import AppContext, build_context
 from app.deps import ApiError, LoginRequired, client_ip, render
 from app.routes import api, auth, child, health, parent
@@ -70,6 +70,11 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
         log.info(
             "starting screentime-controller version=%s mode=%s", VERSION, ctx.config.firewall.mode
         )
+        if not ctx.accounts.parents():
+            log.warning(
+                "no parent account exists: nobody can sign in as a parent until one is added "
+                "with scripts/admin_cli.py user add-parent"
+            )
         await ctx.orchestrator.startup()
         if run_background:
             ctx.scheduler.start()
@@ -161,12 +166,11 @@ def create_app(ctx: AppContext, *, run_background: bool = True) -> FastAPI:
 
 
 def create_app_from_env() -> FastAPI:
-    config_path, users_path = config_paths_from_env()
     try:
-        config, users = load_all(config_path, users_path)
+        config = load_config(config_path_from_env())
     except ConfigError as exc:
         raise SystemExit(exc.render()) from exc
-    ctx = build_context(config, users)
+    ctx = build_context(config)
     return create_app(ctx)
 
 

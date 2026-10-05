@@ -39,13 +39,12 @@ application has **not** yet run on the Pi, a real pfSense, nginx or an iPhone/iP
 git clone <this repository> screentime && cd screentime
 python3 -m venv .venv                        # Python 3.12 or newer
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python scripts/make_dev_users.py   # writes config/users.dev.yaml, prints the passwords
-SCREENTIME_CONFIG=config/config.dev.yaml SCREENTIME_USERS=config/users.dev.yaml \
-  .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+.venv/bin/python scripts/make_dev_users.py   # seeds logins into ./data, prints the passwords
+SCREENTIME_CONFIG=config/config.dev.yaml .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
-Open <http://127.0.0.1:8080>. Sign in as `child8` / `child12` (password `<name>-dev`) or `parents`
-(`parents-dev`). With `make` installed, `make install dev-users run` does the same.
+Open <http://127.0.0.1:8080>. Sign in as `child8` / `child12` or `parent1` / `parent2` (password
+`<name>-dev`). With `make` installed, `make install dev-users run` does the same.
 
 ### Run every check (lint, types, tests, coverage)
 
@@ -66,14 +65,15 @@ sudo deploy/install.sh --extra-san <the Pi's LAN IP>   # Raspberry Pi OS package
 sudo reboot                                            # only if the installer added gpu_mem=16
 # USB backup drive: add the /etc/fstab line the installer printed, then
 sudo mount /mnt/screentime-backup && sudo chown screentime: /mnt/screentime-backup && sudo chmod 0700 /mnt/screentime-backup
-sudo -u screentime /opt/screentime/venv/bin/python /opt/screentime/app/scripts/make_password_hash.py \
-  --config /opt/screentime/config/config.yaml    # once per login
-sudo nano /opt/screentime/config/users.yaml      # paste the three hashes
-sudo nano /opt/screentime/config/config.yaml     # devices, allowances, pfSense address
-cd /opt/screentime/app && sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
-  SCREENTIME_USERS=/opt/screentime/config/users.yaml \
+sudo nano /opt/screentime/config/config.yaml     # children, devices, allowances
+cd /opt/screentime/app
+sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
   /opt/screentime/venv/bin/python -m app --check-config
-sudo systemctl start screentime.service screentime-backup.timer
+sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
+  /opt/screentime/venv/bin/python scripts/admin_cli.py user add-parent <username> --name "<Name>"   # each parent
+sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
+  /opt/screentime/venv/bin/python scripts/admin_cli.py user set-password <child username>          # each child
+sudo systemctl restart screentime.service && sudo systemctl start screentime-backup.timer
 ```
 
 Then follow [OPERATIONS.md](OPERATIONS.md) to set up pfSense (aliases, rules, the `screenctl`
@@ -117,19 +117,19 @@ carries a machine-readable reason code shown in the UI and written to the audit 
 
 ## Configuration
 
-Everything tunable is in `config/config.example.yaml` (heavily commented); logins are in
-`users.example.yaml`. Loading is strict: unknown keys, dangling references, unquoted times such
-as `18:30` (which YAML would read as the number 1110) and placeholder password hashes all stop
-the service from starting, with every problem listed at once.
+Everything tunable is in `config/config.example.yaml` (heavily commented). Logins (usernames,
+roles and Argon2id password hashes) live in the database and are managed with
+`scripts/admin_cli.py user ...` and, for passwords, in the app itself. Loading is strict: unknown
+keys, dangling references and unquoted times such as `18:30` (which YAML would read as the
+number 1110) all stop the service from starting, with every problem listed at once.
 
 ```bash
 .venv/bin/python -m app --check-config      # validate without starting anything
 .venv/bin/python -m app --check-deps        # installed library versions against the minimums
-.venv/bin/python scripts/make_password_hash.py    # Argon2id hash for users.yaml
+.venv/bin/python scripts/admin_cli.py user list    # accounts and whether each has a password
 ```
 
-`users.yaml` must be mode 0600 (enforced at startup). The database, application secret and Web
-Push key live in `storage.data_dir`. Settings added for the Raspberry Pi 1: `security.password_hash`
+The database, application secret and Web Push key live in `storage.data_dir`. Settings added for the Raspberry Pi 1: `security.password_hash`
 (Argon2id cost, never below the OWASP minimum), `clock` (refuse grants until NTP has set the
 clock), `ui` (dashboard polling), `push.allowed_endpoint_hosts` (which push services a browser
 subscription may name), `firewall.ssh_multiplex` and `storage.runtime_dir`.

@@ -16,9 +16,10 @@ import pytest
 from app.audit import configure_logging
 from app.bootstrap import sync_reference_data
 from app.clock import FakeClock, LogicalCalendar
-from app.config import AppConfig, UserCfg
+from app.config import AppConfig
 from app.db import Database
 from app.firewall.dry_run import DryRunFirewallAdapter
+from app.models import TYPE_PARENT, User
 from app.sessions import SessionService
 
 MELBOURNE = ZoneInfo("Australia/Melbourne")
@@ -106,7 +107,7 @@ BASE_CONFIG: dict[str, Any] = {
         "warning_minutes": 5,
         "parent_notifications_enabled": True,
     },
-    "security": {"secure_cookies": False, "enforce_file_modes": False},
+    "security": {"secure_cookies": False},
     "clock": {"require_sync": False},
 }
 
@@ -184,17 +185,26 @@ def _dispose_databases(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         db.dispose()
 
 
+def seed_accounts(db: Database, config: AppConfig, hashes: dict[str, str]) -> None:
+    """Children get their configured rows; any other name in ``hashes`` becomes a parent."""
+    with db.session(write=True) as session:
+        sync_reference_data(session, config)
+        session.flush()
+        rows = {u.username: u for u in session.query(User)}
+        for username, password_hash in hashes.items():
+            row = rows.get(username)
+            if row is None:
+                row = User(username=username, role=TYPE_PARENT, enabled=True)
+                row.display_name = username.capitalize()
+                session.add(row)
+            row.password_hash = password_hash
+
+
 def build_env(tmp_path: Path, start: datetime | None = None, **config_overrides: Any) -> Env:
     config = make_config(tmp_path, **config_overrides)
     db = Database(tmp_path / "data" / "test.db")
     db.upgrade()
-    users = {
-        "child8": UserCfg(role="child", child_id="child8", password_hash=ARGON_HASH),
-        "child12": UserCfg(role="child", child_id="child12", password_hash=ARGON_HASH),
-        "parents": UserCfg(role="parent", password_hash=ARGON_HASH),
-    }
-    with db.session(write=True) as session:
-        sync_reference_data(session, config, users)
+    seed_accounts(db, config, dict.fromkeys(("child8", "child12", "parents"), ARGON_HASH))
     clock = FakeClock(start or at(10, 0))
     calendar = LogicalCalendar(config.zone, config.logical_day_reset)
     service = SessionService(db, config, calendar, clock)

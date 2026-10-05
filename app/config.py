@@ -1,4 +1,4 @@
-"""YAML configuration and credential loading.
+"""YAML configuration loading.
 
 Everything the household can tune lives here. Loading is strict: unknown keys,
 dangling references and malformed values raise :class:`ConfigError` listing every
@@ -10,7 +10,6 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-import stat
 from datetime import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -30,29 +29,26 @@ from pydantic import (
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
-_ARGON2ID_RE = re.compile(
-    r"^\$argon2id\$v=\d+\$m=(\d+),t=(\d+),p=(\d+)\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$"
-)
 # OWASP Password Storage Cheat Sheet minimum for Argon2id (ASVS V2.4 defers to it).
 ARGON2_MIN_MEMORY_KIB = 19456
 ARGON2_MIN_TIME_COST = 2
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# Login names, for children (config.yaml) and parents (database) alike.
+USERNAME_PATTERN = r"^[a-z][a-z0-9_.-]{0,31}$"
 _TABLE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
 
 DEFAULT_CONFIG = "/opt/screentime/config/config.yaml"
-DEFAULT_USERS = "/opt/screentime/config/users.yaml"
+# Passwords may be this long at most: it bounds the Argon2 work one request can cause.
+PASSWORD_MAX_LENGTH = 128
 
 
-def config_paths_from_env() -> tuple[Path, Path]:
-    return (
-        Path(os.environ.get("SCREENTIME_CONFIG", DEFAULT_CONFIG)),
-        Path(os.environ.get("SCREENTIME_USERS", DEFAULT_USERS)),
-    )
+def config_path_from_env() -> Path:
+    return Path(os.environ.get("SCREENTIME_CONFIG", DEFAULT_CONFIG))
 
 
 class ConfigError(Exception):
-    """Raised when configuration or credentials are invalid."""
+    """Raised when the configuration is invalid."""
 
     def __init__(self, problems: list[str]) -> None:
         self.problems = problems
@@ -84,7 +80,7 @@ class _Strict(BaseModel):
 
 class ChildCfg(_Strict):
     display_name: str = Field(min_length=1, max_length=40)
-    username: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,31}$")
+    username: str = Field(pattern=USERNAME_PATTERN)
     weekday_allowance_minutes: int = Field(ge=0, le=24 * 60)
     weekend_allowance_minutes: int = Field(ge=0, le=24 * 60)
     weekday_earliest_start: HHMM | None = None
@@ -224,7 +220,9 @@ class SecurityCfg(_Strict):
     login_lockout_minutes: int = Field(default=15, ge=1, le=1440)
     grant_actions_per_minute: int = Field(default=20, ge=1, le=600)
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
-    enforce_file_modes: bool = True
+    # Owner decision D9: 4 characters for every account (a recorded ASVS deviation, see
+    # SECURITY.md). Raise it here at any time; existing passwords keep working.
+    password_min_length: int = Field(default=4, ge=1, le=PASSWORD_MAX_LENGTH)
     password_hash: PasswordHashCfg = Field(default_factory=PasswordHashCfg)
 
 
@@ -416,51 +414,6 @@ class AppConfig(_Strict):
         return hosts
 
 
-def argon2_parameters(stored_hash: str) -> tuple[int, int, int] | None:
-    """``(memory_kib, time_cost, parallelism)`` from an Argon2id hash string, without argon2."""
-    match = _ARGON2ID_RE.match(stored_hash)
-    if match is None:
-        return None
-    return int(match.group(1)), int(match.group(2)), int(match.group(3))
-
-
-def hash_cost_problem(cfg: PasswordHashCfg, stored_hash: str) -> str | None:
-    """Why a users.yaml hash should be regenerated with the configured parameters, if it should.
-
-    Hashes carry their own parameters and keep verifying, so this is advice, not an error.
-    """
-    params = argon2_parameters(stored_hash)
-    if params is None:
-        return None
-    memory, time_cost, parallelism = params
-    label = f"m={memory},t={time_cost},p={parallelism}"
-    if memory > cfg.memory_kib or time_cost > cfg.time_cost:
-        return f"uses {label}, above the configured budget, so each login is slower than needed"
-    if memory < cfg.memory_kib or time_cost < cfg.time_cost:
-        return f"uses {label}, below the configured minimum"
-    return None
-
-
-class UserCfg(_Strict):
-    role: Literal["child", "parent"]
-    child_id: str | None = None
-    password_hash: str
-
-    @field_validator("password_hash")
-    @classmethod
-    def _argon2id_only(cls, value: str) -> str:
-        if not _ARGON2ID_RE.match(value):
-            raise ValueError(
-                "must be an Argon2id hash; generate one with scripts/make_password_hash.py "
-                "(placeholder values such as '$argon2id$...' are not accepted)"
-            )
-        return value
-
-
-class UsersFile(_Strict):
-    users: dict[str, UserCfg]
-
-
 def _format_validation_error(exc: ValidationError, prefix: str = "") -> list[str]:
     problems: list[str] = []
     for err in exc.errors():
@@ -484,17 +437,6 @@ def _read_yaml(path: Path) -> Any:
         raise ConfigError([f"{path}: invalid YAML ({exc})"]) from exc
 
 
-def check_private_mode(path: Path) -> str | None:
-    """Return a problem description if the file is readable by group or others."""
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode)
-    except OSError:
-        return None
-    if mode & 0o077:
-        return f"{path}: mode is {mode:04o}; secrets files must be 0600 (chmod 600 {path})"
-    return None
-
-
 def load_config(path: Path | str) -> AppConfig:
     path = Path(path)
     raw = _read_yaml(path)
@@ -504,59 +446,3 @@ def load_config(path: Path | str) -> AppConfig:
         return AppConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(_format_validation_error(exc)) from exc
-
-
-def load_users(path: Path | str, config: AppConfig) -> dict[str, UserCfg]:
-    """Load users.yaml and cross-check it against the configured children."""
-    path = Path(path)
-    problems: list[str] = []
-    if config.security.enforce_file_modes:
-        mode_problem = check_private_mode(path)
-        if mode_problem:
-            problems.append(mode_problem)
-    raw = _read_yaml(path)
-    if not isinstance(raw, dict):
-        raise ConfigError([f"{path}: top level must be a mapping"])
-    try:
-        users = UsersFile.model_validate(raw).users
-    except ValidationError as exc:
-        raise ConfigError(problems + _format_validation_error(exc)) from exc
-
-    child_users: dict[str, str] = {}
-    parents = 0
-    for name, user in users.items():
-        if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,31}", name):
-            problems.append(f"users.{name}: username must be lowercase letters, digits, . _ -")
-        if user.role == "parent":
-            parents += 1
-            if user.child_id is not None:
-                problems.append(f"users.{name}: parent users must not have a child_id")
-            continue
-        if user.child_id is None or user.child_id not in config.children:
-            problems.append(f"users.{name}: child_id {user.child_id!r} is not a configured child")
-            continue
-        if config.children[user.child_id].username != name:
-            problems.append(
-                f"users.{name}: username must match children.{user.child_id}.username "
-                f"({config.children[user.child_id].username!r})"
-            )
-        if user.child_id in child_users:
-            problems.append(
-                f"users.{name}: child {user.child_id} already has user {child_users[user.child_id]}"
-            )
-        child_users[user.child_id] = name
-    if parents == 0:
-        problems.append("users: at least one parent user is required")
-    for child_id in config.children:
-        if child_id not in child_users:
-            problems.append(f"users: no login defined for child {child_id!r}")
-    if problems:
-        raise ConfigError(problems)
-    return users
-
-
-def load_all(
-    config_path: Path | str, users_path: Path | str
-) -> tuple[AppConfig, dict[str, UserCfg]]:
-    config = load_config(config_path)
-    return config, load_users(users_path, config)

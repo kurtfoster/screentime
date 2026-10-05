@@ -61,7 +61,7 @@ def test_install_lays_out_directories_files_and_permissions(tmp_path: Path) -> N
     assert mode(prefix / "data") == 0o700 and mode(prefix / ".ssh") == 0o700
     assert not (prefix / "backups").exists()  # backups go to a separate drive, not the SD card
     assert mode(prefix / "config") == 0o750
-    assert mode(prefix / "config" / "users.yaml") == 0o600
+    assert not (prefix / "config" / "users.yaml").exists()  # logins live in the database
     for rel in (
         "app/app/main.py",
         "app/migrations/env.py",
@@ -78,17 +78,32 @@ def test_install_lays_out_directories_files_and_permissions(tmp_path: Path) -> N
     assert "Next steps" in res.stdout
 
 
+def test_fresh_install_prints_the_account_commands_and_an_upgrade_does_not(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "opt"
+    fresh = install(prefix)
+    admin = (
+        f"cd {prefix}/app && sudo -u screentime env SCREENTIME_CONFIG={prefix}/config/config.yaml "
+        f"{prefix}/venv/bin/python scripts/admin_cli.py user"
+    )
+    assert f'{admin} add-parent <username> --name "<Name>"' in fresh.stdout
+    assert f"{admin} set-password <child username>" in fresh.stdout
+    assert "users.yaml" not in fresh.stdout + fresh.stderr
+    (prefix / "data" / "screentime.db").write_text("an existing database")
+    upgrade = install(prefix)
+    assert "Done (upgrade)" in upgrade.stdout and f"{admin} list" in upgrade.stdout
+    assert "add-parent" not in upgrade.stdout
+
+
 def test_install_never_overwrites_existing_config_and_is_idempotent(tmp_path: Path) -> None:
     prefix = tmp_path / "opt"
     install(prefix)
-    cfg, users = prefix / "config" / "config.yaml", prefix / "config" / "users.yaml"
+    cfg = prefix / "config" / "config.yaml"
     cfg.write_text("# my precious config\n")
-    users.write_text("# my precious users\n")
     again = install(prefix)
     assert again.returncode == 0
-    assert (
-        cfg.read_text() == "# my precious config\n" and users.read_text() == "# my precious users\n"
-    )
+    assert cfg.read_text() == "# my precious config\n"
     assert "Keeping existing" in again.stdout
 
 
@@ -254,8 +269,6 @@ def make_prefix(tmp_path: Path) -> Path:
     (prefix / "config" / "config.yaml").write_text(
         "timezone: Australia/Melbourne\nstorage:\n  data_dir: %s\n" % (prefix / "data")
     )
-    (prefix / "config" / "users.yaml").write_text("users: {}\n")
-    (prefix / "config" / "users.yaml").chmod(0o600)
     (prefix / "data" / "secret.key").write_bytes(b"s" * 32)
     (prefix / "data" / "vapid_private.pem").write_text("pem")
     con = sqlite3.connect(prefix / "data" / "screentime.db")
@@ -297,9 +310,9 @@ def test_backup_is_consistent_private_and_complete(tmp_path: Path) -> None:
     assert (
         restored.execute("SELECT count(*) FROM t").fetchone()[0] == 51
     )  # includes the WAL-only row
+    assert not (root / "config" / "users.yaml").exists()  # hashes travel in the database
     for rel in (
         "config/config.yaml",
-        "config/users.yaml",
         "data/secret.key",
         "data/vapid_private.pem",
         "MANIFEST",
@@ -381,10 +394,7 @@ def test_restore_onto_a_fresh_prefix_reproduces_the_database_and_config(tmp_path
     assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 50
     assert "Australia/Melbourne" in (fresh / "config" / "config.yaml").read_text()
     assert (fresh / "config" / "config.yaml.pre-restore").read_text() == "# fresh default\n"
-    assert (
-        mode(fresh / "data" / "screentime.db") == 0o600
-        and mode(fresh / "config" / "users.yaml") == 0o600
-    )
+    assert mode(fresh / "data" / "screentime.db") == 0o600
     assert (fresh / "data" / "secret.key").read_bytes() == b"s" * 32
     assert "SSH key is not part of a backup" in res.stdout
 
@@ -431,7 +441,7 @@ def test_service_unit_matches_the_specification() -> None:
     assert s["User"] == ["screentime"] and s["Group"] == ["screentime"]
     assert s["WorkingDirectory"] == ["/opt/screentime/app"]
     assert "SCREENTIME_CONFIG=/opt/screentime/config/config.yaml" in s["Environment"]
-    assert "SCREENTIME_USERS=/opt/screentime/config/users.yaml" in s["Environment"]
+    assert not any("SCREENTIME_USERS" in e for e in s["Environment"])
     exec_start = s["ExecStart"][0]
     # python -m: with Raspberry Pi OS packages the venv has no uvicorn script of its own.
     assert exec_start.startswith("/opt/screentime/venv/bin/python -m uvicorn app.main:app")
@@ -541,7 +551,7 @@ def test_armv6_selects_raspberry_pi_os_packages(tmp_path: Path) -> None:
     assert "sudo apt install python3 python3-venv python3-fastapi" in res.stdout
     assert "--system-site-packages" in res.stdout and "pip install" not in res.stdout
     assert "smoke_test.py" in res.stdout
-    assert "make_password_hash.py --calibrate" in res.stdout
+    assert "-m app --calibrate-hash" in res.stdout
 
 
 def test_other_machines_keep_pip_unless_told_otherwise(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from sqlalchemy import delete
 
+from app.accounts import AccountService
 from app.auth import AuthService, SlidingWindowLimiter
 from app.bootstrap import sync_reference_data
 from app.clock import (
@@ -18,7 +19,7 @@ from app.clock import (
     SystemClock,
     TimesyncdMarker,
 )
-from app.config import AppConfig, UserCfg
+from app.config import AppConfig
 from app.db import Database
 from app.enforcement import EnforcementService
 from app.firewall.audited import AuditedFirewall
@@ -43,7 +44,6 @@ log = logging.getLogger("screentime.app")
 @dataclass
 class AppContext:
     config: AppConfig
-    users: dict[str, UserCfg]
     db: Database
     clock: Clock
     calendar: LogicalCalendar
@@ -56,6 +56,7 @@ class AppContext:
     notifier: Notifier
     orchestrator: Orchestrator
     auth: AuthService
+    accounts: AccountService
     scheduler: Scheduler
     action_limiter: SlidingWindowLimiter
     monitor: ResourceMonitor
@@ -72,7 +73,6 @@ class AppContext:
 
 def build_context(
     config: AppConfig,
-    users: dict[str, UserCfg],
     *,
     adapter: FirewallAdapter | None = None,
     clock: Clock | None = None,
@@ -94,7 +94,7 @@ def build_context(
     if migrate:
         db.upgrade_if_needed()
     with db.session(write=True) as session:
-        sync_reference_data(session, config, users)
+        sync_reference_data(session, config)
     secret = load_or_create_secret(config.storage.data_dir / "secret.key")
 
     if adapter is None:
@@ -132,7 +132,8 @@ def build_context(
     resolver = EducationResolver(config, dns, firewall, clock)
     notifier = Notifier(db, config, clock, secret, push_sender, public_key)
     orchestrator = Orchestrator(db, config, clock, sessions, enforcement, notifier)
-    auth = AuthService(db, config, users, clock, secret)
+    auth = AuthService(db, config, clock, secret)
+    accounts = AccountService(db, config, clock, auth)
     tick_lag = LagTracker()
     monitor = ResourceMonitor(
         db,
@@ -145,7 +146,6 @@ def build_context(
     )
     ctx = AppContext(
         config=config,
-        users=users,
         db=db,
         clock=clock,
         calendar=calendar,
@@ -158,6 +158,7 @@ def build_context(
         notifier=notifier,
         orchestrator=orchestrator,
         auth=auth,
+        accounts=accounts,
         scheduler=None,  # type: ignore[arg-type]  # assigned below (needs ctx.maintenance)
         action_limiter=SlidingWindowLimiter(config.security.grant_actions_per_minute),
         monitor=monitor,

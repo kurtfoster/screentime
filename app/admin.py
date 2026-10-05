@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -17,7 +18,8 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.config import ConfigError, config_paths_from_env, load_all
+from app.accounts import AccountError
+from app.config import ConfigError, config_path_from_env, load_config
 from app.context import AppContext, build_context
 from app.models import SESSION_ACTIVE, AuditEvent, DayLock, ParentOverride, SessionRecord
 from app.policy import format_duration
@@ -225,6 +227,72 @@ def cmd_unlock(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     return 0
 
 
+# --- accounts ------------------------------------------------------------------------------
+
+OPERATOR = "admin-cli"
+
+
+def _new_password(out: Out) -> str | None:
+    """Prompt twice without echo. The password never appears in arguments, logs or the audit."""
+    first = getpass.getpass("New password: ")
+    if first != getpass.getpass("Repeat new password: "):
+        out("The two passwords do not match; nothing was changed.")
+        return None
+    return first
+
+
+def cmd_user_list(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
+    for a in ctx.accounts.all():
+        state = "enabled" if a.enabled else "DISABLED"
+        password = (
+            f"password set {_fmt(ctx, a.password_changed_at)} by {a.password_changed_by}"
+            if a.has_password
+            else "NO PASSWORD SET"
+        )
+        out(f"{a.username:<16} {a.role:<7} {a.display_name:<20} {state:<9} {password}")
+    return 0
+
+
+def cmd_user_add_parent(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
+    password = _new_password(out)
+    if password is None:
+        return 1
+    try:
+        account = ctx.accounts.add_parent(args.username, args.name, password, OPERATOR)
+    except AccountError as exc:
+        out(f"FAILED: {exc}")
+        return 1
+    out(f"created parent account {account.username} ({account.display_name})")
+    return 0
+
+
+def cmd_user_set_password(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
+    account = ctx.accounts.get(args.username)
+    if account is None or not account.enabled:
+        out(f"FAILED: there is no enabled account called {args.username!r} (see: user list)")
+        return 1
+    password = _new_password(out)
+    if password is None:
+        return 1
+    try:
+        ctx.accounts.set_password(args.username, password, OPERATOR)
+    except AccountError as exc:
+        out(f"FAILED: {exc}")
+        return 1
+    out(f"password set for {args.username}; their other sessions were signed out")
+    return 0
+
+
+def cmd_user_enable(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
+    try:
+        ctx.accounts.set_enabled(args.username, args.enable, OPERATOR)
+    except AccountError as exc:
+        out(f"FAILED: {exc}")
+        return 1
+    out(f"{'enabled' if args.enable else 'disabled'} {args.username}")
+    return 0
+
+
 def cmd_reconcile(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
     async def run() -> int:
         try:
@@ -247,12 +315,10 @@ def cmd_reconcile(ctx: AppContext, args: argparse.Namespace, out: Out) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    default_config, default_users = config_paths_from_env()
     parser = argparse.ArgumentParser(
         prog="admin_cli.py", description="Screen-Time Controller administration"
     )
-    parser.add_argument("--config", type=Path, default=default_config)
-    parser.add_argument("--users", type=Path, default=default_users)
+    parser.add_argument("--config", type=Path, default=config_path_from_env())
     parser.add_argument(
         "--no-reconcile", dest="reconcile", action="store_false", help="do not touch the firewall"
     )
@@ -292,6 +358,26 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("unlock", help="reset a login lockout")
     p.add_argument("username")
     p.set_defaults(func=cmd_unlock)
+    user = sub.add_parser("user", help="login accounts").add_subparsers(
+        dest="user_command", required=True
+    )
+    user.add_parser("list", help="every account and its password state").set_defaults(
+        func=cmd_user_list
+    )
+    p = user.add_parser("add-parent", help="create a parent login (prompts for the password)")
+    p.add_argument("username")
+    p.add_argument("--name", required=True, help='display name, e.g. "Kurt"')
+    p.set_defaults(func=cmd_user_add_parent)
+    p = user.add_parser("set-password", help="set any account's password (prompts for it)")
+    p.add_argument("username")
+    p.set_defaults(func=cmd_user_set_password)
+    for name, enable, text in (
+        ("disable", False, "stop a parent login from signing in (signs it out everywhere)"),
+        ("enable", True, "allow a disabled parent login again"),
+    ):
+        p = user.add_parser(name, help=text)
+        p.add_argument("username")
+        p.set_defaults(func=cmd_user_enable, enable=enable)
     p = sub.add_parser("reconcile", help="converge pfSense on the database now")
     p.add_argument("--education", action="store_true", help="also refresh the education allowlist")
     p.set_defaults(func=cmd_reconcile)
@@ -302,10 +388,10 @@ def main(argv: list[str] | None = None, *, ctx: AppContext | None = None, out: O
     args = build_parser().parse_args(argv)
     if ctx is None:
         try:
-            config, users = load_all(args.config, args.users)
+            config = load_config(args.config)
         except ConfigError as exc:
             print(exc.render(), file=sys.stderr)
             return 2
-        ctx = build_context(config, users, enable_push=False)
+        ctx = build_context(config, enable_push=False)
     status: int = args.func(ctx, args, out)
     return status

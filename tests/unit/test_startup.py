@@ -32,16 +32,16 @@ def test_check_config_imports_only_the_configuration_layer() -> None:
 import contextlib, io, json, sys
 from app.__main__ import main
 with contextlib.redirect_stdout(io.StringIO()):
-    code = main(["--config", "config/config.example.yaml", "--users", "missing.yaml", "--check-config"])
+    code = main(["--config", "config/config.example.yaml", "--check-config"])
 print(json.dumps({{"code": code, "heavy": [m for m in {HEAVY!r} if m in sys.modules]}}))
 """
     result = run_python(code)
-    assert result["code"] == 2  # users file missing: still a clean, validated failure
+    assert result["code"] == 0
     assert result["heavy"] == []
 
 
 def test_script_heads_are_read_without_alembic(tmp_path: Path) -> None:
-    assert script_heads() == {"0001"}
+    assert script_heads() == {"0002"}
     (tmp_path / "a.py").write_text("revision = '0001'\ndown_revision = None\n")
     (tmp_path / "b.py").write_text('revision: str = "0002"\ndown_revision: str | None = "0001"\n')
     assert script_heads(tmp_path) == {"0002"}

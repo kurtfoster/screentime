@@ -261,23 +261,17 @@ def test_startup_reconciliation_expires_stale_sessions_and_derives_active_set(
     from fastapi.testclient import TestClient
 
     from app.clock import FakeClock
-    from app.config import UserCfg
     from app.context import build_context
     from app.firewall.dry_run import DryRunFirewallAdapter
     from app.main import create_app
     from tests.conftest import make_config
 
-    config = make_config(tmp_path)
-    users = {
-        "child8": UserCfg(role="child", child_id="child8", password_hash=user_hashes["child8"]),
-        "child12": UserCfg(role="child", child_id="child12", password_hash=user_hashes["child12"]),
-        "parents": UserCfg(role="parent", password_hash=user_hashes["parents"]),
-    }
+    config = make_config(tmp_path)  # same database: the accounts are already in it
     later = FakeClock(first.clock.now())
     later.advance(minutes=30)
     fw = DryRunFirewallAdapter()
     fw.active = {IPAD, "192.168.12.77"}  # leftovers from before the restart
-    ctx = build_context(config, users, adapter=fw, clock=later)  # type: ignore[arg-type]
+    ctx = build_context(config, adapter=fw, clock=later)  # type: ignore[arg-type]
     with TestClient(create_app(ctx, run_background=False), client=("127.0.0.1", 1)):
         assert fw.active == {IPHONE}
         with ctx.db.session() as db:
@@ -449,7 +443,6 @@ def test_parent_actions_are_rate_limited(env_factory) -> None:  # type: ignore[n
     env = env_factory(
         security={
             "grant_actions_per_minute": 3,
-            "enforce_file_modes": False,
             "secure_cookies": False,
         }
     )

@@ -13,13 +13,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.clock import ClockSync, FakeClock
-from app.config import UserCfg
 from app.context import AppContext, build_context
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.firewall.resolver import DnsAnswer, DnsFailure
 from app.main import create_app
 from app.passwords import hash_password
-from tests.conftest import at, make_config
+from tests.conftest import at, make_config, seed_accounts
 
 PASSWORDS = {"child8": "pw-child8-x", "child12": "pw-child12-x", "parents": "pw-parents-x"}
 IPAD, IPHONE, KIDS_TV, LOUNGE_TV = (
@@ -130,23 +129,18 @@ def open_env(
 ) -> Iterator[AppEnv]:
     overrides.setdefault("notifications", {"browser_push_enabled": True, "warning_minutes": 5})
     config = make_config(tmp_path, **overrides)
-    users = {
-        "child8": UserCfg(role="child", child_id="child8", password_hash=hashes["child8"]),
-        "child12": UserCfg(role="child", child_id="child12", password_hash=hashes["child12"]),
-        "parents": UserCfg(role="parent", password_hash=hashes["parents"]),
-    }
     clock = FakeClock(at(start_hour, start_minute))
     firewall = DryRunFirewallAdapter()
     dns, push = FakeDns(), FakePush()
     ctx = build_context(
         config,
-        users,
         adapter=firewall,
         clock=clock,
         dns=dns,  # type: ignore[arg-type]
         push_sender=push,
         clock_sync=clock_sync,
     )
+    seed_accounts(ctx.db, config, hashes)
     app = create_app(ctx, run_background=False)
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         yield AppEnv(ctx, client, clock, firewall, dns, push, tmp_path)
