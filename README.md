@@ -187,6 +187,29 @@ at `/ca.crt` (needed to bootstrap trust on iOS). Never port-forward it from the 
 Operational detail (logs, upgrades, troubleshooting, certificates): [OPERATIONS.md](OPERATIONS.md).
 Threat model and limitations: [SECURITY.md](SECURITY.md).
 
+### USB backup drive
+
+Nightly backups go to a USB drive mounted at `/mnt/screentime-backup`; `deploy/backup.sh` refuses
+to write anywhere that is not a mounted drive, so a missing drive fails visibly (Diagnostics)
+instead of filling the SD card. Mount it by UUID with `nofail`, so a missing drive never stops the
+Pi booting, and a **90 s** device timeout: a Pi 1's USB can enumerate the drive later than the
+10 s once used, and systemd does not retry a mount whose wait has timed out (readiness check R8,
+5 October 2026). `nofail` means boot does not wait, so the longer timeout costs nothing.
+
+```bash
+UUID=$(sudo blkid -s UUID -o value /dev/sda1); echo "UUID=$UUID"     # must print a UUID; stop if empty
+sudo mkdir -p /mnt/screentime-backup
+sudo cp -a /etc/fstab /etc/fstab.bak-$(date +%Y%m%d-%H%M)
+echo "UUID=$UUID /mnt/screentime-backup ext4 defaults,noatime,nofail,x-systemd.device-timeout=90s 0 2" | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount /mnt/screentime-backup && findmnt /mnt/screentime-backup
+# once the service account exists (after install.sh):
+sudo chown screentime:screentime /mnt/screentime-backup && sudo chmod 0700 /mnt/screentime-backup
+```
+
+After a reboot, `findmnt /mnt/screentime-backup` must show `/dev/sda1` without a manual mount,
+and `sudo journalctl -b | grep -E 'Timed out waiting|Dependency failed'` must print nothing.
+Mount it once only: a second `mount` stacks a second mount on the same path.
+
 ## Bare-metal restore
 
 Backups are created daily at about 03:15 (`screentime-backup.timer`) or on demand, and the newest

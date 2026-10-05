@@ -474,7 +474,7 @@ prepare_backup_dest() {
         warn "No drive is mounted at $BACKUP_DEST, so nightly backups fail (and say so on the"
         warn "diagnostics page) until one is. With the USB drive plugged in:"
         warn "  1. find its UUID:       lsblk -f"
-        warn "  2. add to /etc/fstab:   UUID=<uuid>  $BACKUP_DEST  ext4  defaults,nofail,noatime,x-systemd.device-timeout=10  0  2"
+        warn "  2. add to /etc/fstab:   UUID=<uuid>  $BACKUP_DEST  ext4  defaults,noatime,nofail,x-systemd.device-timeout=90s  0  2"
         warn "  3. mount and hand over: sudo mount $BACKUP_DEST && sudo chown $SERVICE_USER: $BACKUP_DEST && sudo chmod 0700 $BACKUP_DEST"
     fi
 }
