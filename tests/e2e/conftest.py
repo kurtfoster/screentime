@@ -131,3 +131,45 @@ def wait_until(check: Any, timeout: float = 5.0) -> None:
             return
         time.sleep(0.05)
     raise AssertionError(f"condition not met within {timeout:.1f}s")
+
+
+ENGINES = ("chromium", "webkit")
+
+
+@dataclass
+class Engine:
+    name: str
+    browser: Browser
+    devices: dict[str, Any]
+
+
+@pytest.fixture(scope="module", params=ENGINES)
+def engine(request: pytest.FixtureRequest) -> Iterator[Engine]:
+    """Each browser engine in turn (plan 8.3: Chromium and WebKit).
+
+    WebKit needs Ubuntu libraries that Fedora and most desktops lack: when it cannot start
+    here, its tests are skipped with the command that runs them in the Playwright container.
+    """
+    with sync_playwright() as pw:
+        try:
+            instance = getattr(pw, request.param).launch()
+        except Exception as exc:
+            pytest.skip(
+                f"{request.param} unavailable here ({exc.__class__.__name__}); "
+                "run scripts/check_webkit.sh to test it in the Playwright container"
+            )
+        yield Engine(request.param, instance, dict(pw.devices))
+        instance.close()
+
+
+def open_device(
+    engine: Engine, descriptor: str, width: int, height: int
+) -> tuple[BrowserContext, Page]:
+    """A page with the device's user agent, touch and pixel ratio, at the plan's viewport."""
+    options = {k: v for k, v in engine.devices[descriptor].items() if k != "default_browser_type"}
+    options["viewport"] = {"width": width, "height": height}
+    options["screen"] = {"width": width, "height": height}
+    context = engine.browser.new_context(**options)
+    page = context.new_page()
+    page.on("dialog", lambda dialog: dialog.accept())
+    return context, page
