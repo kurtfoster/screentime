@@ -4,32 +4,32 @@
 
 A small, local-first web application that controls recreational screen Internet access for two
 children. It runs on a Raspberry Pi (the household's is a **Raspberry Pi 1 Model B+** named
-`screentime`: one 700 MHz ARMv6 core, 512 MB, no real-time clock) behind nginx and drives pfSense
-runtime firewall tables
-(`SCR_ACTIVE`, `SCR_EDU_ALLOW`) over SSH. It keeps a per-child daily allowance across personal
-Apple devices and shared TVs, gives parents one- and two-tap controls, and never guesses at
-usage: every chargeable minute is an explicit session.
+`screentime`: one 700 MHz ARMv6 core, 512 MB, no real-time clock) behind nginx. pfSense pulls the
+desired state from it once a minute and applies it to its own firewall tables; the Pi holds no
+pfSense credential. It keeps a per-child daily allowance across personal Apple devices and shared
+TVs, gives parents one- and two-tap controls on their phones, and never guesses at usage: every
+chargeable minute is an explicit session.
 
 ```
- iPhone / iPad / TVs                Raspberry Pi                         pfSense
- ┌────────────────┐   HTTPS   ┌──────────────────────────┐   SSH    ┌──────────────────┐
- │ child / parent │ ────────▶ │ nginx ▶ FastAPI app      │ ───────▶ │ screenctl wrapper│
- │ browser or PWA │           │  SQLite (authoritative)  │  forced  │  pfctl tables:   │
- └────────────────┘           │  timers · reconciler     │  command │  SCR_ACTIVE      │
-        ▲                     │  education DNS resolver  │          │  SCR_EDU_ALLOW   │
-        └── Web Push ─────────┴──────────────────────────┘          └──────────────────┘
+ iPhone / iPad / TVs                Raspberry Pi                              pfSense
+ ┌────────────────┐   HTTPS   ┌──────────────────────────┐  GET desired  ┌─────────────────────┐
+ │ child / parent │ ────────▶ │ nginx ▶ FastAPI app      │ ◀──────────── │ screentime-pull     │
+ │ browser or PWA │           │  SQLite (authoritative)  │  POST applied │  (Cron, every min)  │
+ └────────────────┘           │  timers · publisher      │ ◀──────────── │  pf tables, curfew, │
+        ▲                     │  parent alerts           │               │  FQDN education list│
+        └── Web Push ─────────┴──────────────────────────┘               └─────────────────────┘
 ```
 
-Design rules that shape everything: **fail closed** (if pfSense cannot be told, access is never
-claimed), **database is authoritative** (pf tables are derived and re-converged every 30 s),
-**everything is auditable**, **configuration lives in YAML**, and there is no cloud, no Redis and
-no JavaScript framework.
+Design rules that shape everything: **the database is authoritative** (pfSense applies a lease-based
+copy of it), **claims of access are truthful** (a start pfSense does not confirm is refunded),
+**everything is auditable**, and there is no cloud, no Redis and no JavaScript framework. Two owner
+decisions deviate from the original specification and are recorded in SECURITY.md: pfSense
+**fails open** (every device allowed, no curfew) after 10 minutes without the controller, and
+passwords may be as short as **4 characters**.
 
-Status: the application, tests and deployment scripts are complete and adapted for the
-Raspberry Pi 1 (release 1.1, `../Pi1_Adaptation_Plan.md`). The suite passes against the exact
-Raspberry Pi OS Trixie library builds, and the libraries were measured on the Pi itself. The
-application has **not** yet run on the Pi, a real pfSense, nginx or an iPhone/iPad; see
-[Verification status](#verification-status) for exactly what has and has not been exercised.
+Status: release 1.2 (`../Firewall_Pull_Model_Plan.md`) is complete and passes every automated
+check, including WebKit (Safari's engine) for the phone and iPad layouts. It has **not** yet run on
+the Pi, a real pfSense or a real iPhone/iPad; see [Verification status](#verification-status).
 
 ## Quick Start
 
@@ -50,6 +50,7 @@ Open <http://127.0.0.1:8080>. Sign in as `child8` / `child12` or `parent1` / `pa
 
 ```bash
 bash scripts/check.sh                                  # or: make test
+scripts/check_webkit.sh                                # phone and iPad layouts in WebKit (container)
 podman build -f deploy/Containerfile.trixie .          # same tests on the Pi's exact library builds
 ```
 
@@ -63,8 +64,8 @@ sudo apt update && sudo apt full-upgrade -y && sudo apt install -y git
 git clone <this repository> screentime && cd screentime
 sudo deploy/install.sh --extra-san <the Pi's LAN IP>   # Raspberry Pi OS packages, gpu_mem=16, NTP, smoke test
 sudo reboot                                            # only if the installer added gpu_mem=16
-# USB backup drive: add the /etc/fstab line the installer printed, then
-sudo mount /mnt/screentime-backup && sudo chown screentime: /mnt/screentime-backup && sudo chmod 0700 /mnt/screentime-backup
+# USB backup drive: see "USB backup drive" below (UUID, nofail, 90 s device timeout), then
+sudo chown screentime: /mnt/screentime-backup && sudo chmod 0700 /mnt/screentime-backup
 sudo nano /opt/screentime/config/config.yaml     # children, devices, allowances
 cd /opt/screentime/app
 sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
@@ -76,11 +77,10 @@ sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
 sudo systemctl restart screentime.service && sudo systemctl start screentime-backup.timer
 ```
 
-Then follow [OPERATIONS.md](OPERATIONS.md) to set up pfSense (aliases, rules, the `screenctl`
-wrapper, the SSH key, and its NTP service for the Pi) and to install the local CA on the children's
-devices. Leave `firewall.mode: dry_run` until pfSense is ready and the Pi is on the pfSense LAN,
-then switch it to `pfsense_ssh`. A Pi 1 takes about a minute to start the service; that is
-expected.
+Then follow [OPERATIONS.md](OPERATIONS.md) to set up pfSense (aliases, curfew schedule, the
+`screentime-pull` applier and its Cron entry, rules) and to install the local CA on the children's
+devices. Leave `firewall.mode: dry_run` until OPERATIONS.md 2.7 switches it to `pfsense_pull`.
+A Pi 1 takes about a minute to start the service; that is expected.
 
 ## Contents
 
@@ -109,7 +109,11 @@ expected.
 | Parent grants | `parents.allowance_grants_minutes` | +15/+30/+60 adds allowance *and* a parent-override window that lifts the cutoff, start-time rule and day lock. |
 | End for today | Parent dashboard | Ends the child's sessions, locks the day, revokes the device and kills its connections. |
 | Parent TV | `parents.tv_session_choices_minutes` | 15/30/60 or until stopped (ends at the next 02:00 by default). Never charges a child. |
-| Education apps | `always_allowed` | Hostnames resolved (A, AAAA, CNAME chains) into `SCR_EDU_ALLOW`, so they work when no session is running. |
+| Education apps | pfSense alias `SCR_EDU_ALLOW` | Hostnames resolved by pfSense itself; they work when no session is running, even in curfew. |
+| Curfew | pfSense schedule `SCR_CURFEW` | Personal devices only (TVs exempt), 06:00 to 21:00 by default, adjustable in the pfSense GUI. Not applied in fail-open. |
+| Leases | `firewall.max_lease_seconds` | pfSense grants each device for at most 15 minutes at a time, renewed every poll, timed by its own clock. |
+| Start honesty | `firewall.ack_timeout_seconds` | A start is charged at once; if pfSense has not confirmed it within 150 s it is ended and refunded. |
+| Fail-open | pfSense `STALE_GRACE`, `STALE_POLICY` | 10 minutes without the controller: every device allowed, no curfew (owner decision); parents see it on the dashboard. |
 
 Precedence when rules disagree is exactly as in the specification (section 9): parent override,
 parent TV, day lock, device cutoff, start time, allowance, one-device, entitlement. Every denial
@@ -129,22 +133,28 @@ number 1110) all stop the service from starting, with every problem listed at on
 .venv/bin/python scripts/admin_cli.py user list    # accounts and whether each has a password
 ```
 
-The database, application secret and Web Push key live in `storage.data_dir`. Settings added for the Raspberry Pi 1: `security.password_hash`
-(Argon2id cost, never below the OWASP minimum), `clock` (refuse grants until NTP has set the
-clock), `ui` (dashboard polling), `push.allowed_endpoint_hosts` (which push services a browser
-subscription may name), `firewall.ssh_multiplex` and `storage.runtime_dir`.
+The database, application secret, Web Push key and the pfSense token's hash live in
+`storage.data_dir`. Notable settings: `security.password_hash` (Argon2id cost, never below the
+OWASP minimum), `security.password_min_length` (4), `clock` (refuse starts until NTP has set the
+clock), `ui` (dashboard polling), `push.allowed_endpoint_hosts`, and under `firewall`: `mode`
+(`dry_run` or `pfsense_pull`), `host` (pfSense's address), `max_lease_seconds`,
+`ack_timeout_seconds`, `degraded_after_seconds` and `stale_grace_seconds` (must equal pfSense's
+`STALE_GRACE`). Settings v1.2 removed (`always_allowed`, the SSH fields) are rejected with a
+message saying where they went.
 
 ## First-run configuration
 
 1. **Devices.** Give each managed device a static DHCP mapping on pfSense and put the same
-   address in `devices.<id>.ip`. The controller identifies devices by IP address.
-2. **Allowances and rules** in `config.yaml`; children's usernames must match `users.yaml`.
-3. **Logins.** One hash per user with `make_password_hash.py`.
+   address in `devices.<id>.ip` **and** in pfSense's `screentime-pull.conf` device map.
+   `admin_cli.py firewall-check` compares the two.
+2. **Allowances and rules** in `config.yaml`. Each child's login is `children.<id>.username`.
+3. **Logins.** `admin_cli.py user add-parent` for each parent (each has their own login), and
+   `user set-password` for each child, or later from the parent dashboard.
 4. **Validate** with `--check-config`, start the service, and sign in as a parent.
 5. **pfSense.** Follow [OPERATIONS.md](OPERATIONS.md). Until then the app runs in dry-run mode
    and nothing on the network changes.
-6. **Education allowlist.** Open *Parent, Diagnostics*. Add hostnames under `always_allowed` as
-   you learn what each app needs; the page shows what resolves and what does not.
+6. **Education allowlist.** The pfSense alias `SCR_EDU_ALLOW`: add hostnames as you learn what
+   each app needs (pfSense's firewall log shows what is blocked).
 7. **Children's devices.** Install the CA, add the app to the Home Screen and (optionally) turn
    on alerts. Steps are in OPERATIONS.md.
 
@@ -152,8 +162,8 @@ subscription may name), `firewall.ssh_multiplex` and `storage.runtime_dir`.
 
 `deploy/install.sh` is idempotent. It:
 
-- creates the `screentime` system account and `/opt/screentime/{app,config,data,.ssh}` with tight
-  permissions (data and SSH directories 0700, `users.yaml` 0600);
+- creates the `screentime` system account and `/opt/screentime/{app,config,data}` with tight
+  permissions (data 0700, config 0750);
 - installs the code (root-owned, read-only to the service) and precompiles it, so the service does
   not recompile every module at each start;
 - chooses where the Python libraries come from (`--deps`). On an ARMv6 Pi (1 or Zero) it installs
@@ -170,19 +180,24 @@ subscription may name), `firewall.ssh_multiplex` and `storage.runtime_dir`.
   filesystem lacks `noatime`;
 - prepares `/mnt/screentime-backup` (`--backup-dest`) for the USB backup drive and prints the
   `/etc/fstab` line to add;
-- creates `config.yaml` and `users.yaml` from the examples **only if they do not exist**; use
-  `--overwrite-config` (with confirmation) to replace them, which first keeps a `.bak` copy;
+- creates `config.yaml` from the example **only if it does not exist**; use
+  `--overwrite-config` (with confirmation) to replace it, which first keeps a `.bak` copy;
 - creates a private certificate authority and a server certificate for `screen.home.arpa`
   (`--hostname`, `--extra-san`, `--renew-tls`); the CA is constrained to `home.arpa`;
-- installs and validates the nginx site, and the systemd service plus a daily backup timer;
-- starts the service only if `--check-config` passes, otherwise tells you what to fix.
+- installs and validates the nginx site (`--firewall-host` is the only address allowed to
+  `/firewall/`), removes Debian's stock `default` site when it is exactly Debian's link (it would
+  otherwise answer requests for the bare IP with nginx's own page), and installs the systemd
+  service plus a daily backup timer;
+- starts the service only if `--check-config` passes, otherwise tells you what to fix;
+- on a fresh install, prints the exact account commands (`user add-parent`, `user set-password`).
 
 It never touches pfSense. Use `--dry-run` to see what it would do and `--no-tls` to supply your
 own certificates (paths are in `deploy/nginx-screen.conf`).
 
 The service binds to `127.0.0.1:8080` behind nginx, which listens on the LAN only, refuses
-non-private source addresses, rate-limits `/login`, and serves the CA certificate over plain HTTP
-at `/ca.crt` (needed to bootstrap trust on iOS). Never port-forward it from the WAN.
+non-private source addresses, rate-limits every path that checks a password, lets only pfSense
+reach `/firewall/`, and serves the CA certificate over plain HTTP at `/ca.crt` (needed to bootstrap
+trust on iOS). Never port-forward it from the WAN.
 
 Operational detail (logs, upgrades, troubleshooting, certificates): [OPERATIONS.md](OPERATIONS.md).
 Threat model and limitations: [SECURITY.md](SECURITY.md).
@@ -215,31 +230,30 @@ Mount it once only: a second `mount` stacks a second mount on the same path.
 Backups are created daily at about 03:15 (`screentime-backup.timer`) or on demand, and the newest
 14 are kept on the USB drive mounted at `/mnt/screentime-backup`, never on the SD card that holds
 the database. If the drive is missing the backup refuses to run, and the parent Diagnostics page
-shows the failure and the time of the last good backup. Each is one 0600 tarball holding a SQLite-consistent
-copy of the database (taken with SQLite's online-backup API, so it is safe while the service is
-running), `config.yaml`, `users.yaml`, the application secret and the Web Push key. It does not
-contain pfSense tables (rebuilt from the database) or the SSH private key.
+shows the failure and the time of the last good backup. Each is one 0600 tarball holding a
+SQLite-consistent copy of the database (taken with SQLite's online-backup API, so it is safe while
+the service is running; it includes the logins and their password hashes), `config.yaml`, the
+application secret, the Web Push key and the pfSense token's SHA-256. It holds no pfSense table
+contents: pfSense rebuilds them from the next fetch.
 
 To rebuild on a fresh Pi:
 
 ```bash
 # 1. Fresh Raspberry Pi OS Lite (32-bit) Trixie; clone the repository (same release, or newer)
 sudo deploy/install.sh --extra-san <LAN IP>          # packages, account, venv, nginx, systemd
-# 2. Mount the USB backup drive (see Quick Start), then restore the newest backup from it
+# 2. Mount the USB backup drive (see "USB backup drive"), then restore the newest backup from it
 sudo deploy/restore.sh /mnt/screentime-backup/screentime-YYYYmmdd-HHMMSS.tar.gz --yes
-# 3. New SSH key for pfSense (the old private key is deliberately not in backups)
-sudo -u screentime ssh-keygen -t ed25519 -f /opt/screentime/.ssh/id_ed25519 -N ''
-#    ...then authorise the new public key on pfSense (OPERATIONS.md, "SSH access")
-# 4. Confirm
-sudo -u screentime /opt/screentime/venv/bin/python /opt/screentime/app/scripts/admin_cli.py status
+# 3. Confirm, including that pfSense still matches
+A="sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml /opt/screentime/venv/bin/python /opt/screentime/app/scripts/admin_cli.py"
+$A status && $A firewall-check
 ```
 
-The restored database is upgraded in place by Alembic when the service starts, so a backup taken
-on an older release restores onto a newer one. Because `secret.key` and the Web Push key come back
-too, existing logins and push subscriptions keep working. If you restore *without* them, everyone
-signs in again and re-enables alerts. Restoring TLS material: re-run `install.sh`; children's
-devices trust the CA, so keep `/etc/screentime/tls/ca.key` in your own safe place if you want the
-same CA after a rebuild (otherwise reinstall the new `ca.crt` on each device).
+The restored database is upgraded in place by Alembic when the service starts. Because
+`secret.key`, the Web Push key and the token hash come back too, existing logins, push
+subscriptions and pfSense's token keep working. Restoring TLS material: re-run `install.sh`;
+children's devices and pfSense trust the CA, so keep `/etc/screentime/tls/ca.key` in your own safe
+place if you want the same CA after a rebuild (otherwise reinstall the new `ca.crt` on each device
+and on pfSense, OPERATIONS.md 2.5).
 
 ## Development
 
@@ -247,43 +261,51 @@ same CA after a rebuild (otherwise reinstall the new `ca.crt` on each device).
 bash scripts/check.sh            # ruff format, ruff lint, mypy --strict, shell syntax, pytest + coverage
 bash scripts/check.sh --fast     # no coverage
 bash scripts/check.sh --no-e2e   # skip the browser tests
-bash scripts/check.sh --profile trixie   # Python 3.13 + the Raspberry Pi OS library versions
+bash scripts/check.sh --profile trixie   # Python 3.13 + the Raspberry Pi OS library versions (and dash)
+scripts/check_webkit.sh          # the mobile layout tests in WebKit and Chromium, in Playwright's container
 podman build -f deploy/Containerfile.trixie .   # the suite against the Debian builds themselves
 .venv/bin/playwright install chromium    # once, for the browser tests (they skip if unavailable)
 ```
 
 The Pi runs older library versions than PyPI offers (FastAPI 0.115, Starlette 0.46, pydantic 2.10,
-argon2-cffi 21.1 and so on; `constraints/trixie.txt`). The `pyproject.toml` minimums are those
-versions: fix code that needs something newer rather than raising a minimum. Without Python 3.13
-installed, run the trixie profile in a container as the script's error message shows.
+argon2-cffi 21.1, cryptography 43 and so on; `constraints/trixie.txt`). The `pyproject.toml`
+minimums are those versions: fix code that needs something newer rather than raising a minimum.
+Without Python 3.13 installed, run the trixie profile in a container as the script's error message
+shows. WebKit (the engine of Safari on iPhone and iPad) cannot run on Fedora, so its tests skip
+locally and `scripts/check_webkit.sh` runs them in Playwright's own image.
 
-Tests are in three tiers: `tests/unit` (calendar, policy, sessions, config, resolver, the pfSense
-wrapper against a stub `pfctl`, deployment scripts), `tests/integration` (real FastAPI app over a
-temporary SQLite database with a fake clock and the dry-run firewall), and `tests/e2e` (Playwright
-against a real server). Coverage is reported on every run and must stay at or above 85%.
+Tests are in three tiers: `tests/unit` (calendar, policy, sessions, config, password rules, the
+firewall protocol, the pfSense applier against stub `pfctl`, `su`, `sysctl` and `lockf` under bash
+and dash, deployment scripts), `tests/integration` (real FastAPI app over a temporary SQLite
+database with a fake clock, in dry-run and pull mode), and `tests/e2e` (Playwright against a real
+server, including the mobile viewport audit of plan 8.3). Coverage is reported on every run and
+must stay at or above 85%.
 
 Administration without the web UI (also the way to inspect a misbehaving system):
 
 ```bash
-sudo -u screentime /opt/screentime/venv/bin/python /opt/screentime/app/scripts/admin_cli.py --help
+sudo -u screentime env SCREENTIME_CONFIG=/opt/screentime/config/config.yaml \
+  /opt/screentime/venv/bin/python /opt/screentime/app/scripts/admin_cli.py --help
 #   status | sessions | audit | grant | end-today | clear-lock | end-session | end-all
-#   tv | enable-device | unlock | reconcile [--education] | devices
+#   tv | enable-device | unlock | reconcile | devices | firewall-check
+#   user list | add-parent | set-password | disable | enable
+#   firewall-token rotate
 ```
 
-`status` also prints the service's latest resource snapshot: memory, load, timer lag, SSH
-latency, last password-check time, clock sync, under-voltage flags and the last backup.
+`status` also prints the service's latest resource snapshot: memory, load, timer lag, pfSense's
+last fetch, last password-check time, clock sync, under-voltage flags and the last backup.
 
 The version shown on the diagnostics page comes from the `VERSION` file.
 
 ## Project layout
 
 ```
-app/                 FastAPI application (config, policy, sessions, enforcement, routes, templates, static)
-  firewall/          adapter interface, dry-run and SSH adapters, education resolver
+app/                 FastAPI application (config, accounts, policy, sessions, enforcement, routes, templates, static)
+  firewall/          adapter contract, dry-run and pull adapters, document protocol, token, alerts
 migrations/          Alembic (applied automatically at startup, or: python -m app --init-db)
 config/              example configuration and development configuration
-deploy/              systemd units, nginx config, install/backup/restore scripts, pfSense wrapper
-scripts/             password hashing, admin CLI, smoke test, one-shot reconcile, icons, check.sh
+deploy/              systemd units, nginx config, install/backup/restore scripts, pfSense applier and its example config
+scripts/             admin CLI, dev logins, smoke test, one-shot reconcile, icons, check.sh, check_webkit.sh
 constraints/         trixie.txt: the Raspberry Pi OS library versions, for the parity profile
 tests/               unit, integration and e2e tests
 README.md  OPERATIONS.md  SECURITY.md  VERSION
@@ -298,89 +320,80 @@ easy to change.
    children's shared devices, declares child8's `owned_devices` empty although `ipad` is owned by
    child8, and also says personal devices are usable only by their owner. The example config
    lists shared TVs under `permitted_shared_devices` and the iPad under its owner; the loader
-   rejects the contradictory form with an explanatory message. For a genuinely shared iPad, give
-   it `type: shared_tv` and no `owner`.
+   rejects the contradictory form with an explanatory message.
 2. **Parent overrides bypass rules 3 to 5** (day lock, cutoff, start time). Extra allowance arrives
    as an explicit adjustment, so the allowance rule still measures base plus adjustments. Rules 7
    and 8 (one device, entitlement) are integrity checks and are never bypassed.
 3. **Grant window.** +N minutes creates an allowance adjustment of N and an override window from
-   now to *now + N minutes + any time the child has already reserved*. It is deliberately exact
-   ("permits exactly the intended extension window"): a child who starts 20 minutes after a +30
-   grant has only the remaining 10 minutes of window, so grants are best given when the child is
-   ready. The unused allowance stays credited for the logical day.
+   now to *now + N minutes + any time the child has already reserved*.
 4. **End for Today revokes earlier grant windows**, otherwise an old grant would silently defeat
-   the lock the parent has just applied. A grant made *after* End for Today bypasses the lock for
-   its window; both records are kept.
+   the lock the parent has just applied.
 5. **Sessions are capped where the next restriction begins.** A 30-minute request at 18:10 on the
-   kids' TV ends at 18:30. The same model ends sessions correctly after downtime, charging only
-   up to the moment access should have stopped.
+   kids' TV ends at 18:30.
 6. **A "last minutes" option.** When less time remains than the smallest choice, the child may use
-   exactly what is left, so short remainders are not stranded.
-7. **Extensions** are offered only in the warning window and cannot cross a cutoff or lock. On a
-   shared TV a child may extend for everyone, or, if a sibling lacks time, for themself only.
+   exactly what is left.
+7. **Extensions** are offered only in the warning window and cannot cross a cutoff or lock.
 8. **Sibling verification** uses the sibling's normal password; wrong attempts count toward that
    sibling's lockout.
-9. **Login lockout.** Five failures lock a *child* login for 15 minutes; a parent unlocks it from
-   the dashboard. The *parent* login is throttled per source address instead, so a child cannot
-   lock the parents out.
-10. **HTTPS is required for the PWA on iOS**, so the installer creates a private CA. The CA is
-    name-constrained to `home.arpa`, so its key cannot be used to impersonate ordinary websites.
-11. **Web Push works only while the device can reach its push service.** A device idle outside a
-    session is limited to the education allowlist, so alerts are delivered during sessions (when
-    the warning fires) but not to an idle, blocked device.
-12. **Python 3.12+** and Raspberry Pi OS Trixie (Python 3.13). The installer refuses older Python with
-    advice. On the Raspberry Pi 1 the libraries are the Raspberry Pi OS packages, not PyPI.
-13. **`replace_active_ips`** in the SSH adapter is implemented as a diff of add/del operations (the
-    wrapper has no atomic replace for the active table); the reconciler itself uses add/del plus
-    state kills. Education tables are replaced atomically with `pfctl -T replace`.
-14. **Scope kept out of v1**, as specified: VLANs, Switch, mobile data, MDM, DoH blocking, traffic
+9. **Login lockout.** Five failures lock a *child* login for 15 minutes; the *parent* logins are
+   throttled per source address instead, so a child cannot lock a parent out.
+10. **HTTPS is required for the PWA on iOS**, so the installer creates a private CA,
+    name-constrained to `home.arpa`.
+11. **Web Push works only while the device can reach its push service.**
+12. **Python 3.12+** and Raspberry Pi OS Trixie (Python 3.13); on the Pi 1 the libraries are the
+    Raspberry Pi OS packages, not PyPI.
+13. **Scope kept out**, as specified: VLANs, Switch, mobile data, MDM, DoH blocking, traffic
     inference, cloud accounts, multi-household.
 
 Raspberry Pi 1 adaptation (release 1.1; `../Pi1_Adaptation_Plan.md` has the evidence):
 
-15. **Clock gate covers child starts only.** Until NTP has set the clock, nothing is granted and
-    child starts are refused with `CLOCK_NOT_SYNCED`, but parent actions are accepted as the plan
-    specifies. A parent TV start in that window is recorded and reported as started, yet the TV
-    gets no access until the clock is synchronised (the desired set is forced empty), and a parent
-    grant is keyed to whatever day the unsynchronised clock shows.
-16. **Boot waits up to 90 s for NTP**, then starts anyway and fails closed. Waiting indefinitely
-    (the plan's first draft) would leave parents with no controller at all while NTP is down.
-17. **Visibility-aware polling lives in `app.js`**, not in an `hx-trigger` filter: filters need
-    `eval`, which the CSP and the htmx configuration forbid. An idle child page now polls every
-    15 s, so a parent action can take up to 15 s to appear there; enforcement is immediate.
-18. **The backup destination is an installer option** (`--backup-dest`, rendered into the backup
-    unit), not a `config.yaml` key, so the unit's mount dependency and the script cannot disagree.
-19. **SSH multiplexing switches itself off** if the control socket path would exceed the Unix
-    socket limit (108 bytes), rather than failing over on every call.
+14. **Boot waits up to 90 s for NTP**, then starts anyway; child starts stay refused until the clock
+    is set.
+15. **Visibility-aware polling lives in `app.js`**, not in an `hx-trigger` filter: filters need
+    `eval`, which the CSP and the htmx configuration forbid.
+16. **The backup destination is an installer option** (`--backup-dest`), so the unit's mount
+    dependency and the script cannot disagree.
+
+Release 1.2 (`../Firewall_Pull_Model_Plan.md`; owner decisions D1 to D13):
+
+17. **pfSense pulls; the Pi holds no credential** (D1). SSH, `screenctl`, the education resolver
+    and `always_allowed` are gone; the education allowlist is a pfSense FQDN alias.
+18. **Start immediately, refund if unconfirmed** (D2, plan 5.1): no pending state; the UI says
+    "the Internet turns on within a minute".
+19. **Clock gate (plan 5.5):** while the clock is unsynchronised the controller publishes nothing
+    and answers pfSense with 503; pfSense keeps its leases and, after its grace, fails open.
+20. **The acknowledgement grammar is extended** beyond plan 6.3 with optional
+    `stale <grace> <policy>` and `known <id> <ip> <type>` lines and a `fail-closed` mode. Without
+    them the controller could not check its grace period and device list against pfSense (C9),
+    nor word its alerts correctly under `STALE_POLICY=closed`.
+21. **The applier's grace also counts from its first run** on a pfSense box, not only from the
+    last good fetch or boot: otherwise a fresh install on a long-running pfSense would fail open
+    at once.
+22. **No `users.yaml` migration path.** v1.1 was never installed (D12), so `import-yaml`, the
+    legacy restore path and the `users.yaml` warning were not built.
+23. **The Account menu (M2)** arrived with the password screens (PULL-10), because the header could
+    not hold another link at 375 px.
 
 ## Verification status
 
-Exercised automatically (about 380 tests plus 12 browser tests, about 93% line coverage,
-`mypy --strict` and ruff clean): policy precedence and every acceptance scenario in specification
-section 24.3 against the dry-run firewall; DST edges; concurrency (two simultaneous extensions with
-room for one); fail-closed behaviour, including an unsynchronised clock; startup catch-up; the SSH
-adapter's command construction and its multiplexing fallback against a fake runner; the
-`screenctl` wrapper against a stub `pfctl` including injection attempts; the DNS resolver against
-a real loopback DNS server; Web Push encryption decrypted as a browser would, and VAPID signatures
-verified; the installer, TLS issuance and backup/restore in a temporary prefix; and the critical
-browser flows in headless Chromium.
+Exercised automatically (about 540 tests locally, including about 60 browser tests in Chromium,
+plus the same mobile audit in WebKit in Playwright's container; about 94% line coverage;
+`mypy --strict` and ruff clean): policy precedence and the specification's acceptance scenarios
+against the dry-run firewall; DST edges; concurrency; the pull routes (token, source, 503,
+malformed acknowledgements, the session/CSRF allowlist); the three parent alert states,
+fail-open episodes and their dismissal, and the controller-outage note; accounts (password rules,
+re-authentication, session revocation, rehash on login, audit without passwords); the pfSense
+applier under bash and dash with stub commands (grammar, leases, grace, fail-open and recovery,
+reboots, lock contention, the exact unprivileged fetch, configuration ownership); the installer,
+TLS issuance, nginx site and backup/restore in a temporary prefix; and the daily screens at six
+viewports for overflow, 44 px targets, text size and what is visible without scrolling.
 
-Raspberry Pi 1 evidence (27 September 2026):
+The whole suite also passes on Python 3.13 with the Trixie library versions
+(`check.sh --profile trixie`, which also runs the applier under dash).
 
-- **On the Pi (Gate 0):** every Raspberry Pi OS package installs and imports on ARMv6 with no
-  "Illegal instruction"; libraries use 64 MB; Argon2id at the configured cost verifies in 1.41 s;
-  importing the libraries takes 41.5 s, which is why start-up was trimmed.
-- **Off the Pi (Gate 1):** the whole suite passes on Python 3.13 with the Trixie library versions
-  (`check.sh --profile trixie`) and inside Debian Trixie with the Debian builds
-  (`deploy/Containerfile.trixie`). The installer ran end to end in that container in apt mode.
-- **Against a real OpenSSH server:** multiplexed wrapper calls took 3 ms against 81 ms for a fresh
-  connection (workstation figures), and a restarted server was reconnected transparently.
-
-**Not yet exercised**, because it needs your hardware: the application running on the Pi (Gate 2
-in the adaptation plan: start-up time, login time, memory, polling cost and tick lag), a real
-pfSense (`pfctl` behaviour, the sudo and forced-command setup, multiplexing through the forced
-command, table persistence across filter reloads), nginx (validated by `nginx -t` at install time,
-not by the test suite), iOS/iPadOS behaviour (CA trust, Home Screen install, Web Push), and
-`screenctl` under FreeBSD's `sh` (it is plain POSIX and tested under bash, but not under `dash` or
-FreeBSD `sh`). Work through OPERATIONS.md section 9, "Acceptance checklist on real hardware", and
-section 10, "Raspberry Pi 1 resources", before relying on it.
+**Not yet exercised**, because it needs your hardware: the application on the Pi (Gate 2
+measurements), the applier under FreeBSD's `sh` on pfSense (`screentime-pull --self-test` at
+Gate B), real `pfctl`, Cron and Kea behaviour, nginx's access rules (validated by `nginx -t` at
+install time), and iOS/iPadOS (CA trust, Home Screen install, Web Push, real Safari rendering).
+Work through OPERATIONS.md section 9, "Acceptance checklist on real hardware", and section 10,
+"Raspberry Pi 1 resources", before relying on it.
