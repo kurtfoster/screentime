@@ -2,8 +2,10 @@
 
 Rules enforced here (spec sections 3, 13, 18):
 
-* Fail closed: a child start only succeeds once the desired state has been published. If
-  it cannot be, the session is marked ``enforcement_failed`` and refunded.
+* Start immediately, charge from Start (plan 5.1): the firewall applies the change at its
+  next poll. A session the firewall has not acknowledged within
+  ``firewall.ack_timeout_seconds`` is ended as ``enforcement_failed`` and refunded, and the
+  child is told. A publication that fails outright refunds at once.
 * Commit first, then publish. The database is authoritative; the firewall follows, and it
   kills the connections of devices that leave the published set.
 * A failed publication after a revocation (stop, expiry, End-for-Today) never undoes the
@@ -13,14 +15,14 @@ Rules enforced here (spec sections 3, 13, 18):
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.audit import record_audit
 from app.clock import Clock
 from app.config import AppConfig
 from app.db import Database
 from app.enforcement import EnforcementService
-from app.firewall.base import FirewallError
+from app.firewall.base import AppliedState, FirewallError
 from app.notifications import Notifier
 from app.policy import Reason
 from app.runtime import run_sync
@@ -45,6 +47,7 @@ class Orchestrator:
         self.sessions = sessions
         self.enforcement = enforcement
         self.notifier = notifier
+        self._confirmed: AppliedState | None = None
 
     # -- helpers ----------------------------------------------------------------------
 
@@ -68,7 +71,29 @@ class Orchestrator:
                 "The Internet could not be switched on. You have not been charged. "
                 "Ask a parent if this keeps happening.",
             )
+        await self.check_acknowledgements()
         return res
+
+    async def check_acknowledgements(self) -> None:
+        """Confirm sessions the firewall has applied; end and refund those it never did."""
+        applied = self.enforcement.applied_state
+        # Each acknowledgement is applied once (it carries its own receipt time, so every new
+        # one differs), which keeps this five-second check free of writes in between.
+        if applied is not None and applied.received_at is not None and applied != self._confirmed:
+            await run_sync(self.sessions.confirm_enforced, applied.device_ids, applied.received_at)
+            self._confirmed = applied
+        timeout = self.cfg.firewall.ack_timeout_seconds
+        cutoff = self.clock.now() - timedelta(seconds=timeout)
+        stale = await run_sync(self.sessions.unacknowledged_since, cutoff)
+        if not stale:
+            return
+        log.error("firewall did not acknowledge sessions %s within %d s", stale, timeout)
+        await run_sync(
+            lambda: self.sessions.mark_enforcement_failed(
+                stale, f"not acknowledged by the firewall within {timeout} s", notify=True
+            )
+        )
+        await self._publish_quietly()
 
     async def _degraded_gate(self, actor: str) -> CommandResult | None:
         if not self.enforcement.degraded:
@@ -192,6 +217,7 @@ class Orchestrator:
         result = await run_sync(lambda: self.sessions.tick(now))
         if result.changed:
             await self._publish_quietly()
+        await self.check_acknowledgements()
         try:
             await self.notifier.dispatch_pending()
         except Exception:

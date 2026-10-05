@@ -198,7 +198,7 @@
       if (!network) delete form.dataset.rid; // keep the id only when a retry may repeat this request
       form.querySelectorAll('input[type="password"]').forEach((i) => { i.value = ""; });
       if (status >= 200 && status < 300 && data.ok) {
-        showFlash("Screen time started. Have fun!", "ok");
+        showFlash("Screen time started. The Internet turns on within a minute.", "ok");
         refreshLive();
       } else {
         // Keep the form exactly as the child left it so they can correct one thing and retry.

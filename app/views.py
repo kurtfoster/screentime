@@ -14,6 +14,7 @@ from app.clock import LogicalCalendar
 from app.config import AppConfig
 from app.models import (
     SESSION_ACTIVE,
+    SESSION_ENFORCEMENT_FAILED,
     TYPE_CHILD,
     TYPE_PARENT,
     AuditEvent,
@@ -61,6 +62,7 @@ class ActiveView:
     warning: bool
     participants: list[str]
     ineligible: list[str]
+    pending: bool  # started, not yet acknowledged by the firewall (plan 5.1)
 
 
 @dataclass
@@ -78,6 +80,7 @@ class ChildView:
     degraded: bool
     siblings: list[tuple[str, str]]
     override_note: str | None
+    not_enforced_note: str | None
     server_epoch: float
     warning_minutes: int
     warning_seconds: int
@@ -115,6 +118,7 @@ class SessionRow:
     device: str
     ends: str
     kind: str
+    pending: bool
 
 
 @dataclass
@@ -135,6 +139,8 @@ class ParentView:
     state_key: str
 
 
+# How long a child sees "the Internet did not turn on" after a refund (plan 5.1).
+_NOT_ENFORCED_NOTE_FOR = timedelta(minutes=10)
 # Password events shown on the parent dashboard for this long (plan 7.1).
 _RECENT_ACCOUNT_EVENTS = timedelta(hours=24)
 
@@ -250,6 +256,7 @@ class ViewBuilder:
                 if override
                 else None
             ),
+            not_enforced_note=self._not_enforced_note(db, child_id, now, active_view),
             server_epoch=now.timestamp(),
             warning_minutes=cfg.warning_minutes,
             warning_seconds=cfg.warning_minutes * 60,
@@ -271,6 +278,8 @@ class ViewBuilder:
             view.locked,
             degraded,
             view.override_note,
+            view.not_enforced_note,
+            active_view.pending if active_view else None,
             view.poll_seconds,  # a new interval needs a fresh fragment, not a 204
         )
         return view
@@ -326,7 +335,29 @@ class ViewBuilder:
             warning=in_window,
             participants=participants,
             ineligible=ineligible,
+            pending=s.enforced_at is None,
         )
+
+    def _not_enforced_note(
+        self, db: Session, child_id: str, now: datetime, active: ActiveView | None
+    ) -> str | None:
+        """Tell the child, for a while, when a session they started was refunded (plan 5.1)."""
+        if active is not None:
+            return None
+        last = db.scalars(
+            select(SessionRecord)
+            .where(SessionRecord.child_id == child_id)
+            .order_by(SessionRecord.start_at.desc())
+            .limit(1)
+        ).first()
+        if (
+            last is None
+            or last.status != SESSION_ENFORCEMENT_FAILED
+            or last.actual_end_at is None
+            or now - last.actual_end_at > _NOT_ENFORCED_NOTE_FOR
+        ):
+            return None
+        return "The Internet did not turn on. Your time has been given back."
 
     def parent_view(
         self,
@@ -421,6 +452,7 @@ class ViewBuilder:
                 device=cfg.devices[s.device_id].display_name,
                 ends=self._end_text(s.planned_end_at),
                 kind="parent" if s.session_type == TYPE_PARENT else "child",
+                pending=s.enforced_at is None,
             )
             for s in active_sessions
         ]
@@ -468,6 +500,7 @@ class ViewBuilder:
                 for r in rows
             ],
             view.account_lines,
+            [(s.id, s.pending) for s in session_rows],
             [(t.device_id, t.users) for t in tv_rows],
             override_rows,
             locked,

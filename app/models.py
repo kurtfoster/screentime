@@ -98,6 +98,9 @@ class SessionRecord(Base):
     charged_seconds: Mapped[int] = mapped_column(Integer, default=0)
     end_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     until_stopped: Mapped[bool] = mapped_column(Boolean, default=False)
+    # When the firewall first acknowledged the device for this session (plan 5.1). A session
+    # still unacknowledged after firewall.ack_timeout_seconds is ended and refunded.
+    enforced_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     created_by: Mapped[str] = mapped_column(String(32))
     idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
 

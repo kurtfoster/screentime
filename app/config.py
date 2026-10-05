@@ -175,6 +175,9 @@ class FirewallCfg(_Strict):
     # so this must cover at least three polls; it bounds how long a device stays on if this
     # controller stops answering (until the fail-open grace runs out).
     max_lease_seconds: int = Field(default=900, ge=180, le=3600)
+    # A started session that the firewall has not acknowledged within this time is ended
+    # and refunded (plan 5.1): the child is never charged for Internet that did not turn on.
+    ack_timeout_seconds: int = Field(default=150, ge=60, le=900)
     education_dns_refresh_seconds: int = Field(default=300, ge=30, le=86400)
     include_ipv6_in_education: bool = True
 

@@ -2,6 +2,9 @@
   {% if view.degraded %}
   <div class="banner banner-warn" role="alert">&#9888; Screen time can't start right now. Ask a parent for help.</div>
   {% endif %}
+  {% if view.not_enforced_note %}
+  <div class="banner banner-warn" role="alert">&#9888; {{ view.not_enforced_note }}</div>
+  {% endif %}
 
   <section class="card hero compact" aria-label="Time left today">
     <p class="big">{{ view.remaining_text }} <span>left today</span></p>
@@ -23,6 +26,9 @@
       {% if a.participants | length > 1 %}<p class="muted small">&#128101; Watching: {{ a.participants | join(", ") }}</p>{% endif %}
     </div>
 
+    {% if a.pending %}
+    <div class="notice notice-ok" role="status">&#8987; Switching on. The Internet turns on within a minute.</div>
+    {% endif %}
     {% if a.warning %}
     <div class="notice notice-warn" role="alert">&#9200; Time is nearly up.</div>
     {% endif %}

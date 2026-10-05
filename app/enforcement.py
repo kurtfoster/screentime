@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -107,9 +107,16 @@ class EnforcementService:
             except FirewallError as exc:
                 await self._mark_degraded(str(exc), now)
                 raise
-            self.applied_state = await self.firewall.applied()
+            self.record_applied(await self.firewall.applied(), now)
             await self._mark_healthy(now)
             return PublishResult(generation, desired)
+
+    def record_applied(self, applied: AppliedState | None, now: datetime) -> None:
+        """Keep the latest acknowledgement, timed by this clock if the adapter did not time it."""
+        if applied is not None and applied.received_at is None:
+            applied = replace(applied, received_at=now)
+        if applied is not None:
+            self.applied_state = applied
 
     def _read_desired(self, now: datetime) -> DesiredState:
         next_reset = self._cal.day_start(self._cal.logical_day(now) + timedelta(days=1))

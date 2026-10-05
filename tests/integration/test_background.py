@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select, text
 
-from app.db import Database, UTCDateTime, current_revision, upgrade_to_head
+from app.db import Database, UTCDateTime, current_revision, script_heads, upgrade_to_head
 from app.firewall.dry_run import DryRunFirewallAdapter
 from app.models import NotificationEvent, PushSubscription
 from app.push import PushError, PushGone
@@ -371,7 +371,7 @@ def test_migrations_tolerate_a_restored_database_from_a_previous_release(tmp_pat
     restored = Database(tmp_path / "old.db")
     upgrade_to_head(restored.url)
     upgrade_to_head(restored.url)  # idempotent
-    assert current_revision(restored) == "0003"
+    assert current_revision(restored) in script_heads()  # the latest revision
     with restored.session() as s:
         assert s.execute(text("SELECT count(*) FROM audit_events")).scalar_one() == 1
         # 0002: an existing account gains an empty hash, i.e. "no password set".

@@ -433,8 +433,15 @@ class SessionService:
             self._finish(db, sess, now, reason, now, actor)
             return CommandResult(ok=True, sessions=[sess], ended_device_ids={sess.device_id})
 
-    def mark_enforcement_failed(self, session_ids: list[int], error: str) -> None:
-        """Firewall could not grant access: terminate and refund so nothing is charged."""
+    def mark_enforcement_failed(
+        self, session_ids: list[int], error: str, *, notify: bool = False
+    ) -> CommandResult:
+        """Firewall did not grant access: terminate and refund so nothing is charged.
+
+        With ``notify`` (the late failure of plan 5.1, when the person has already been told
+        that the session started), the child and the parents are told it did not happen.
+        """
+        ended: set[str] = set()
         with self.db.session(write=True) as db:
             now = self._now()
             for sid in session_ids:
@@ -445,10 +452,66 @@ class SessionService:
                 s.actual_end_at = now
                 s.charged_seconds = 0
                 s.end_reason = "enforcement_failed"
+                ended.add(s.device_id)
                 record_audit(
                     db, now, "system", "session_enforcement_failed", f"session:{sid}", "error",
                     child=s.child_id, device=s.device_id, error=error[:200],
                 )  # fmt: skip
+                if notify:
+                    self._notify_not_enforced(db, now, s)
+        return CommandResult(ok=True, ended_device_ids=ended)
+
+    def _notify_not_enforced(self, db: Session, now: datetime, s: SessionRecord) -> None:
+        device = self.cfg.devices[s.device_id].display_name
+        if s.child_id:
+            self._notify(
+                db, now, kind="enforcement_failed", audience="child",
+                title="The Internet did not turn on",
+                body=f"{device} could not be switched on. Your time has been given back.",
+                dedupe=f"not-enforced:{s.id}", child_id=s.child_id, session_id=s.id,
+            )  # fmt: skip
+        if self.cfg.notifications.parent_notifications_enabled:
+            who = self.cfg.children[s.child_id].display_name if s.child_id else "Parent"
+            self._notify(
+                db, now, kind="enforcement_failed", audience="parent",
+                title=f"{device} did not switch on for {who}",
+                body="pfSense did not confirm it in time; the session was ended and refunded.",
+                dedupe=f"not-enforced-parent:{s.id}", child_id=s.child_id, session_id=s.id,
+            )  # fmt: skip
+
+    def confirm_enforced(self, device_ids: frozenset[str], acknowledged_at: datetime) -> int:
+        """Mark active sessions whose device an acknowledgement included; returns how many.
+
+        Only acknowledgements received after a session started count: an older one cannot
+        say anything about a grant it had not been told about.
+        """
+        if not device_ids:
+            return 0
+        with self.db.session(write=True) as db:
+            pending = db.scalars(
+                select(SessionRecord).where(
+                    SessionRecord.status == SESSION_ACTIVE,
+                    SessionRecord.enforced_at.is_(None),
+                    SessionRecord.device_id.in_(device_ids),
+                    SessionRecord.start_at <= acknowledged_at,
+                )
+            ).all()
+            for s in pending:
+                s.enforced_at = acknowledged_at
+            return len(pending)
+
+    def unacknowledged_since(self, cutoff: datetime) -> list[int]:
+        """Active sessions started before ``cutoff`` that the firewall never acknowledged."""
+        with self.db.session() as db:
+            return list(
+                db.scalars(
+                    select(SessionRecord.id).where(
+                        SessionRecord.status == SESSION_ACTIVE,
+                        SessionRecord.enforced_at.is_(None),
+                        SessionRecord.start_at < cutoff,
+                    )
+                )
+            )
 
     # -- parent commands --------------------------------------------------------------
 
