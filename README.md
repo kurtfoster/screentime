@@ -109,7 +109,7 @@ A Pi 1 takes about a minute to start the service; that is expected.
 | Parent grants | `parents.allowance_grants_minutes` | +15/+30/+60 adds allowance *and* a parent-override window that lifts the cutoff, start-time rule and day lock. |
 | End for today | Parent dashboard | Ends the child's sessions, locks the day, revokes the device and kills its connections. |
 | Parent TV | `parents.tv_session_choices_minutes` | 15/30/60 or until stopped (ends at the next 02:00 by default). Never charges a child. |
-| Education apps | pfSense alias `SCR_EDU_ALLOW` | Hostnames resolved by pfSense itself; they work when no session is running, even in curfew. |
+| Education apps | pfSense alias `SCR_EDU_ALLOW` | Hostnames resolved by pfSense itself; they work when no session is running, even in curfew. `screentime-edu-seen` keeps every address they resolved to in the last 4 hours in `SCR_EDU_SEEN`, so short CDN TTLs do not block them. |
 | Curfew | pfSense schedule `SCR_CURFEW` | Personal devices only (TVs exempt), 06:00 to 21:00 by default, adjustable in the pfSense GUI. Not applied in fail-open. |
 | Leases | `firewall.max_lease_seconds` | pfSense grants each device for at most 15 minutes at a time, renewed every poll, timed by its own clock. |
 | Start honesty | `firewall.ack_timeout_seconds` | A start is charged at once; if pfSense has not confirmed it within 150 s it is ended and refunded. |
@@ -154,7 +154,8 @@ message saying where they went.
 5. **pfSense.** Follow [OPERATIONS.md](OPERATIONS.md). Until then the app runs in dry-run mode
    and nothing on the network changes.
 6. **Education allowlist.** The pfSense alias `SCR_EDU_ALLOW`: add hostnames as you learn what
-   each app needs (pfSense's firewall log shows what is blocked).
+   each app needs (pfSense's firewall log shows what is blocked). `screentime-edu-seen` picks up
+   new names by itself (OPERATIONS.md 2.5a).
 7. **Children's devices.** Install the CA, add the app to the Home Screen and (optionally) turn
    on alerts. Steps are in OPERATIONS.md.
 

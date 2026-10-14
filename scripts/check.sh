@@ -65,7 +65,7 @@ step "mypy (strict)"
 "$PY" -m mypy
 step "shell syntax"
 for f in deploy/*.sh scripts/*.sh; do bash -n "$f"; done
-sh -n deploy/pfsense-screentime-pull.sh
+for f in deploy/pfsense-*.sh; do sh -n "$f"; done
 
 MARK=()
 [ "$E2E" -eq 0 ] && MARK=(-m "not e2e")

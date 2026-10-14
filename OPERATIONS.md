@@ -144,6 +144,7 @@ The Orbi must be in **AP Mode** so that pfSense hands out addresses and sees eac
 | `SCR_ACTIVE_TV` | leave empty | The applier: TVs with a lease |
 | `SCR_FAILOPEN` | leave empty | The applier, only in fail-open: every managed device |
 | `SCR_EDU_ALLOW` | the education **hostnames** (below) | pfSense `filterdns`, every resolve interval (300 s) |
+| `SCR_EDU_SEEN` | `192.0.2.1` (placeholder) | `screentime-edu-seen`: every address those hostnames resolved to in the last 4 hours (2.5a) |
 | `SCR_KIDS_DEVICES` | 192.168.12.30, .31, .40, .41 | Static |
 | `SCR_EDU_DEVICES` | 192.168.12.30, .31 | Static: devices allowed education apps while idle |
 | `SCR_CONTROLLER` | 192.168.12.20 | Static |
@@ -156,7 +157,15 @@ result in *Diagnostics › Tables › SCR_EDU_ALLOW* and compare with `host <nam
 trial and error: CDN-backed apps use names you only find in pfSense's firewall log.
 
 A filter reload (saving any firewall change) empties the runtime tables. The applier replaces all
-three on every run, so they are back within a minute (C7).
+three on every run, so they are back within a minute (C7). `screentime-edu-seen` rebuilds
+`SCR_EDU_SEEN` from its own history within 20 seconds.
+
+Why `SCR_EDU_SEEN` exists: the education CDNs answer with TTLs of 10 to 60 seconds, but `filterdns`
+re-resolves only every 300 seconds. When a CDN moves a name, a device can be handed the new address
+before `SCR_EDU_ALLOW` has it, and the app is blocked until the next resolve. `SCR_EDU_SEEN`
+resolves the same names through the same Unbound cache three times a minute and keeps each address
+for four hours after it was last seen, so an address once handed out stays allowed. It never holds
+LAN, loopback or reserved addresses, even if a name resolves to one (DNS rebinding).
 
 ### 2.3 Curfew schedule
 
@@ -214,6 +223,26 @@ SSH on pfSense stays off. Files go up through the web interface and are installe
 
    Expect `-rw------- root wheel`, the number of devices (4), and the five settings. The applier
    refuses to run if the file is not root-owned 0600.
+
+### 2.5a The education address history (screentime-edu-seen)
+
+It needs nothing from the Pi and can be installed before the applier (Setup Phase B does).
+
+1. **[pfSense GUI]** *Firewall › Aliases › IP › Add*: name `SCR_EDU_SEEN`, type **Host(s)**, one
+   host `192.0.2.1` (placeholder; the script replaces it). **Save**, **Apply Changes**.
+2. Upload `deploy/pfsense-screentime-edu-seen.sh` as in 2.5, then **[pfSense shell]**:
+
+   ```sh
+   install -o root -g wheel -m 0755 /tmp/pfsense-screentime-edu-seen.sh /usr/local/sbin/screentime-edu-seen
+   su -m nobody -c '/usr/local/sbin/screentime-edu-seen --self-test'
+   /usr/local/sbin/screentime-edu-seen; /usr/local/sbin/screentime-edu-seen --status
+   ```
+
+   Expect `self-test passed`, then the `SCR_EDU_ALLOW` hostnames and a non-zero address count. The
+   hostnames come from `/var/etc/filterdns.conf`, which pfSense writes from the alias: there is no
+   second list to maintain.
+3. *Services › Cron › Add*: every field `*`, user **root**, command
+   `/usr/local/sbin/screentime-edu-seen`. **Save**. Each run makes three passes 20 seconds apart.
 
 ### 2.6 Self-test and a TLS check
 
@@ -294,7 +323,8 @@ Telegram, Pushover, Slack and Discord off (D13: the parent dashboard is the aler
 | 3a | Pass | `SCR_ACTIVE_TV` | any | | TVs: no curfew |
 | 3b | Pass | `SCR_FAILOPEN` | any | | Fail-open: no curfew (D4) |
 | 3c | Pass | `SCR_ACTIVE_PERSONAL` | any | `SCR_CURFEW` | Personal devices, normal operation |
-| 4 | Pass | `SCR_EDU_DEVICES` | `SCR_EDU_ALLOW` | | Education while idle, curfew or not |
+| 4 | Pass | `SCR_EDU_DEVICES` | `SCR_EDU_ALLOW` TCP 443 | | Education while idle, curfew or not |
+| 4b | Pass | `SCR_EDU_DEVICES` | `SCR_EDU_SEEN` TCP 443 | | The same, for addresses seen in the last 4 hours (2.2) |
 | 5 | Block (log) | `SCR_KIDS_DEVICES` | any | | Everything else |
 | 6 | Pass | LAN net | any | | Parents and other devices, as before |
 
@@ -322,8 +352,8 @@ managed devices.
 ### 2.14 Reinstalling pfSense
 
 Restoring `config.xml` brings back the aliases, schedule, rules, static mappings and the Cron
-entry. Files outside it do not come back: repeat 2.5 (applier, CA certificate, configuration file)
-and 2.6. Rotate the token on the Pi if you did not keep the old configuration file. Until the
+entry. Files outside it do not come back: repeat 2.5 (applier, CA certificate, configuration file),
+2.5a step 2 (`screentime-edu-seen`) and 2.6. Rotate the token on the Pi if you did not keep the old configuration file. Until the
 applier is back, pfSense applies nothing: devices without a static rule are blocked (fail
 closed), which is the safe direction.
 
@@ -434,7 +464,8 @@ years; replacing it means reinstalling `ca.crt` on every device **and on pfSense
 | Diagnostics drift check lists a mismatch | `config.yaml` and pfSense's map differ. Fix one of them; `$A firewall-check` must say "matches". A device missing from pfSense's map makes every document be rejected. |
 | Start works, Internet does not come on within a minute | The session is refunded after 150 s ("The Internet did not turn on"). Check the rules (2.11), that the device's address matches its mapping, and *Diagnostics › Tables*. |
 | Device keeps Internet after a session ends | Up to a minute is normal (the next poll). Longer: is the device in `SCR_FAILOPEN` (fail-open), or in another pass rule above rule 5? |
-| An education app does not work when idle | It needs a hostname not in `SCR_EDU_ALLOW`. Find it in *Status › System Logs › Firewall* (blocked destinations) and add it to the alias. |
+| An education app does not work when idle | It needs a hostname not in `SCR_EDU_ALLOW`. Find it in *Status › System Logs › Firewall* (blocked destinations) and add it to the alias. `screentime-edu-seen --status` must list the new name within a minute. |
+| `SCR_EDU_SEEN` holds only `192.0.2.1` or nothing | `screentime-edu-seen` is not running or finds no names: check the Cron entry, `grep screentime-edu-seen /var/log/system.log`, and `screentime-edu-seen --status`. |
 | A child is locked out of signing in | Five wrong passwords lock the login for 15 minutes. Child card **Unlock**, setting a new password, or `$A unlock`. |
 | "No password set for Child 8" | Child card › More › **Set password**. |
 | Service will not start | `journalctl -u screentime -n 50` shows every configuration error at once. Old v1.1 settings (`always_allowed`, SSH fields) are rejected with where they went. |

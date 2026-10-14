@@ -31,6 +31,7 @@ replacing anti-lockout), then the [Household hardening checklist](#household-har
                      │                 └────┼───┤ pfctl -T replace (root)            │
                      │   POST /firewall/v1/applied └ ack, incl. fail-open history    │
                      │                      │ filterdns → SCR_EDU_ALLOW (FQDN alias) │
+                     │                      │ edu-seen → SCR_EDU_SEEN (4 h history)  │
  Pi ─────────────────┴── blocked from pfSense management; DNS and NTP only ──────────┘
 ```
 
@@ -149,7 +150,10 @@ app prevents it.
    device's own Screen Time controls can limit those.
 5. **VPNs, iCloud Private Relay, proxies and Tor**, and CDN-shared addresses behind the education
    allowlist. Disable Private Relay on managed devices; an address-based allowlist for CDN-hosted
-   services is necessarily approximate.
+   services is necessarily approximate. Measured on 14 Oct 2026: none of 30 popular sites resolved
+   to the education CDN addresses. `SCR_EDU_SEEN` widens the set to every address seen in the last
+   4 hours (still only the allowlisted names' own answers), and refuses LAN, loopback and reserved
+   addresses so a name cannot be pointed at the LAN (DNS rebinding).
 6. **Device identity is the IPv4 address.** Use static mappings by MAC, *Deny unknown clients*, and
    Fixed (not Rotating) private Wi-Fi addresses (OPERATIONS.md 2.1).
 7. **IPv6** is not enforced. Keep it off on the LAN.
